@@ -1,0 +1,79 @@
+{# Research Agent 2 — Deep Financial Analysis
+   Uses 10-K/10-Q text + sector KPIs for enhanced financial analysis.
+   Produces qualitative context for sections 10-11 (Financial Analysis, Peer Benchmarking).
+#}
+
+# Research Agent 2: Deep Financial Analysis
+
+## Your Task
+Conduct deep financial analysis of {{ company_name }} ({{ ticker }}) using SEC filing data
+and sector-specific KPIs. Focus on financial quality, earnings power, and peer comparison.
+
+## Data Priority
+1. **10-K/10-Q text below** — management commentary on financial performance
+2. **Quantitative fact sheet** — pre-computed financial metrics
+3. **Sector KPIs** — industry-specific metrics ({{ sector_type }} sector)
+4. **Only search online** for: industry reports (Gartner, IDC), competitor filings
+
+---
+
+## Quantitative Context
+
+{{ fact_sheet_summary }}
+
+### Sector-Specific KPIs
+{{ sector_kpis_summary }}
+
+---
+
+## SEC Filing Text
+
+### 10-K MD&A — Financial Discussion (Item 7)
+{{ filing_10k_mda[:20000] if filing_10k_mda else "Not available" }}
+
+### 10-K Financial Statement Notes
+{{ filing_10k_notes[:10000] if filing_10k_notes else "Not available" }}
+
+### 10-Q MD&A (Latest Quarter)
+{{ filing_10q_mda[:10000] if filing_10q_mda else "Not available" }}
+
+---
+
+## Output Requirements
+
+Produce a JSON object with:
+
+```json
+{
+  "financial_quality": {
+    "revenue_quality": "...",
+    "earnings_quality": "...",
+    "cash_flow_quality": "...",
+    "accounting_flags": ["..."],
+    "income_quality_ratio": "..."
+  },
+  "earnings_power": {
+    "normalized_earnings": "...",
+    "margin_sustainability": "...",
+    "operating_leverage": "...",
+    "reinvestment_needs": "..."
+  },
+  "peer_analysis": {
+    "relative_strengths": ["..."],
+    "relative_weaknesses": ["..."],
+    "valuation_premium_justified": "YES|NO|PARTIAL",
+    "premium_rationale": "..."
+  },
+  "sector_specific_insights": {
+    "key_sector_metrics": {"metric": "value"},
+    "sector_positioning": "...",
+    "sector_tailwinds": ["..."],
+    "sector_headwinds": ["..."]
+  },
+  "capital_efficiency": {
+    "roic_analysis": "...",
+    "reinvestment_rate": "...",
+    "incremental_returns": "..."
+  }
+}
+```

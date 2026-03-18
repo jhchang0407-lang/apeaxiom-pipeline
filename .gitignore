@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+cache/
+output/
+test_output/
+website_backup_*/
+.DS_Store
+.env
+*.env
+.claude/

@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+cache/
+output/
+test_output/
+tests/
+website_backup_*/
+.git/
+*.md
+.claude/

@@ -1,0 +1,110 @@
+{# Research Agent 1 — Foundation & Current Events
+   Uses 10-K/10-Q filing text as PRIMARY data source.
+   Produces qualitative context for sections 2-9.
+#}
+
+# Research Agent 1: Foundation & Business Analysis
+
+## Your Task
+Analyze {{ company_name }} ({{ ticker }}) using the SEC filing data below as your PRIMARY source.
+Produce a comprehensive qualitative research brief covering: business overview, competitive position,
+customer analysis, management quality, and recent developments.
+
+## Data Priority
+1. **10-K/10-Q text below** — your primary and most reliable source
+2. **Quantitative fact sheet** — pre-computed financial metrics (use as-is, already formatted)
+3. **Only search online** for: (a) events AFTER the filing date ({{ filing_date }}),
+   (b) industry/market reports not in filings, (c) competitor analysis not covered in filings
+
+{% if sector_analysis_guidance %}
+---
+
+## Sector-Specific Analysis Focus
+
+{{ sector_analysis_guidance }}
+
+Use this sector-specific guidance to shape your analysis — especially for the company_overview,
+competitive_position, and customer_analysis sections of your output. Tailor field content to
+reflect the business model and key performance drivers of this sector.
+{% endif %}
+
+---
+
+## Quantitative Context (Pre-Formatted — Use As-Is)
+
+**Company:** {{ company_name }} ({{ ticker }})
+**Sector:** {{ sector }} | **Industry:** {{ industry }}
+{% if price %}**Current Price:** ${{ price }} | **Market Cap:** ${{ "%.1f"|format(market_cap / 1e9) }}B{% endif %}
+
+### Revenue & Margins (5-Year)
+{{ revenue_summary }}
+
+### Segment Revenue
+{{ segment_summary }}
+
+### Geographic Revenue
+{{ geo_summary }}
+
+### Key Metrics
+{{ key_metrics_summary }}
+
+---
+
+## SEC Filing Text
+
+### 10-K Business Description (Item 1)
+{{ filing_10k_business[:20000] if filing_10k_business else "Not available" }}
+
+### 10-K Risk Factors (Item 1A)
+{{ filing_10k_risk_factors[:15000] if filing_10k_risk_factors else "Not available" }}
+
+### 10-K MD&A (Item 7)
+{{ filing_10k_mda[:15000] if filing_10k_mda else "Not available" }}
+
+### 10-Q MD&A (Latest Quarter)
+{{ filing_10q_mda[:10000] if filing_10q_mda else "Not available" }}
+
+### 10-Q Risk Factor Updates
+{{ filing_10q_risk_factors[:5000] if filing_10q_risk_factors else "No updates" }}
+
+---
+
+## Output Requirements
+
+Produce a JSON object with these sections:
+
+```json
+{
+  "company_overview": {
+    "description": "...",
+    "revenue_model": "...",
+    "life_cycle_stage": "...",
+    "competitive_advantages": ["..."],
+    "key_segments": [{"name": "...", "description": "...", "pct_of_revenue": "..."}]
+  },
+  "competitive_position": {
+    "moat_type": "WIDE|NARROW|NONE",
+    "moat_sources": ["..."],
+    "market_position": "...",
+    "key_competitors": ["..."],
+    "competitive_threats": ["..."]
+  },
+  "customer_analysis": {
+    "customer_base": "...",
+    "geographic_diversification": "...",
+    "customer_concentration_risk": "...",
+    "retention_drivers": ["..."]
+  },
+  "management_quality": {
+    "ceo_background": "...",
+    "management_track_record": "...",
+    "capital_allocation_rating": "EXCELLENT|GOOD|AVERAGE|POOR",
+    "insider_alignment": "..."
+  },
+  "recent_developments": [
+    {"date": "...", "event": "...", "significance": "..."}
+  ],
+  "growth_drivers": ["..."],
+  "key_risks": ["..."]
+}
+```

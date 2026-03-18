@@ -1,0 +1,31 @@
+# Core
+fastapi>=0.115.0
+uvicorn>=0.32.0
+httpx>=0.27.0
+
+# SEC EDGAR
+edgartools>=3.0.0
+
+# LLM
+openai>=1.50.0
+anthropic>=0.40.0
+
+# Data processing
+pydantic>=2.10.0
+jinja2>=3.1.0
+
+# Output
+weasyprint>=62.0
+markdown>=3.7
+
+# Cloud (website mode)
+# modal>=0.68.0  # Install separately: pip install modal
+boto3>=1.35.0     # R2 upload (S3-compatible)
+
+# Google Sheets
+gspread>=6.0.0
+google-auth>=2.29.0
+
+# Dev
+pytest>=8.3.0
+pytest-asyncio>=0.24.0

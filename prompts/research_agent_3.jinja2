@@ -1,0 +1,135 @@
+{# Research Agent 3 — Investment Decision & Valuation Context
+   Uses valuation model results + full context for investment decision.
+   Produces qualitative context for sections 12 (Valuation), 13 (Risk), 14 (Conclusion).
+#}
+
+# Research Agent 3: Investment Decision & Risk Assessment
+
+## Your Task
+Assess the investment case for {{ company_name }} ({{ ticker }}) using the valuation model
+results and comprehensive data below. Focus on valuation methodology appropriateness,
+risk assessment, and investment conclusion.
+
+## Valuation Model Used
+**Model:** {{ valuation_method }}
+**Industry:** {{ industry }}
+**Rationale:** {{ valuation_rationale }}
+
+{% if valuation_method == "dcf" %}
+### DCF Results
+{{ dcf_results_summary }}
+{% elif valuation_method == "bank_equity" %}
+### Bank Equity Model Results
+{{ bank_equity_summary }}
+{% elif valuation_method == "nav" %}
+### NAV Model Results
+{{ nav_summary }}
+{% else %}
+### Peer Multiple Results
+{{ peer_multiple_summary }}
+{% endif %}
+
+---
+
+## Key Data Points
+
+{{ investment_data_summary }}
+
+---
+
+## SEC Filing — Risk Factors (10-K Item 1A)
+{{ filing_10k_risk_factors[:15000] if filing_10k_risk_factors else "Not available" }}
+
+---
+
+## Operational Driver Linkage
+
+Ground every scenario in the company's OPERATIONAL REALITY, not abstract financial percentages.
+Every revenue/margin assumption should trace to a physical or business driver that management
+discusses in earnings calls and filings.
+
+IDENTIFY 2-4 KEY OPERATIONAL DRIVERS for {{ company_name }} by examining:
+- What units does management track? (subscribers, GW capacity, stores, loans, boe/d, lives covered)
+- What drives revenue? (volume × price, installed base × ARPU, same-store × new-store)
+- What drives margins? (utilization, mix shift, scale leverage, input costs)
+- What are the capacity constraints? (capex cycle, regulatory approvals, talent, supply chain)
+
+SECTOR EXAMPLES (adapt to the specific company — do NOT copy these blindly):
+- Utilities: MW capacity additions, rate base growth ($B), authorized ROE, customer accounts
+- Tech/Cloud: consumption growth rate, workload migrations, ARPU expansion, seat count
+- SaaS: net new ARR ($M), net revenue retention %, logo churn, upsell attach rate
+- Retail/Consumer: same-store sales growth, new unit openings, average ticket size, e-commerce mix
+- Banks: loan growth rate, NIM (bps), provision rate (bps), CET1 ratio, deposit beta
+- Insurance: combined ratio, premium growth, reserve development, investment yield
+- Energy: production volume (boe/d or mcfe/d), reserve replacement ratio, realized price, breakeven
+- Healthcare: lives covered, medical loss ratio (MLR), premium yield, risk adjustment
+- Industrials: backlog ($B), book-to-bill ratio, utilization rate, price/cost spread
+- REITs: occupancy rate, NOI growth, rent spreads on renewals, development pipeline ($B)
+
+The test of good operational driver linkage: could an industry analyst read your scenario
+and verify each assumption against observable data?
+
+---
+
+## Catalyst Calendar
+
+Extract specific upcoming catalysts from the filings and data above, including:
+- Earnings report dates (next 2-4 quarters)
+- Regulatory filings, docket numbers, expected decisions
+- Product launches, contract renewals, patent expirations
+- Debt maturities, refinancing windows
+- Industry events (FERC dockets, FDA approvals, rate cases)
+Be as specific with dates as the filing data allows. Use "Q3 2026" if exact date unknown.
+
+---
+
+## Output Requirements
+
+Produce a JSON object with:
+
+```json
+{
+  "valuation_assessment": {
+    "methodology_appropriate": "YES|NO|PARTIAL",
+    "methodology_rationale": "...",
+    "key_assumptions": ["..."],
+    "sensitivity_drivers": ["..."],
+    "valuation_range": {"low": "...", "mid": "...", "high": "..."},
+    "confidence_level": "HIGH|MEDIUM|LOW"
+  },
+  "risk_assessment": {
+    "top_risks": [
+      {"risk": "...", "probability": "HIGH|MEDIUM|LOW", "impact": "HIGH|MEDIUM|LOW",
+       "transmission": "...", "monitoring_metric": "..."}
+    ],
+    "bear_case_triggers": ["..."],
+    "regulatory_risks": "...",
+    "litigation_risks": "..."
+  },
+  "investment_conclusion": {
+    "thesis": "...",
+    "bull_case": "...",
+    "bear_case": "...",
+    "base_case": "...",
+    "key_debates": ["..."],
+    "catalysts": ["..."]
+  },
+  "operational_drivers": [
+    {
+      "driver": "Name of the operational metric (e.g., 'Azure consumption growth')",
+      "unit": "Measurement unit (e.g., '% YoY', 'GW/yr', 'bps')",
+      "bull": "Bull case value with brief context",
+      "base": "Base case value with brief context",
+      "bear": "Bear case value with brief context"
+    }
+  ],
+  "catalyst_calendar": [
+    {
+      "date_or_window": "Q3 2026 (Oct 2026)",
+      "event": "Event name",
+      "detail": "Specific detail about the catalyst and expected outcome",
+      "impact": "One of: BULL_TRIGGER, BEAR_RISK, MONITORING (pick the single most relevant tag)"
+    }
+  ]
+}
+```
