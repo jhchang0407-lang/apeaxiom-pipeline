@@ -2,5 +2,5 @@
 dockerfilePath = "Dockerfile"
 
 [deploy]
-# Run daily at 6 AM UTC (10 PM PST / 1 AM EST)
-cronSchedule = "0 6 * * *"
+# Run daily at 10 AM UTC (2 AM PST) — matches n8n Master Automation schedule
+cronSchedule = "0 10 * * *"
