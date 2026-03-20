@@ -46,8 +46,9 @@ from config.settings import (
 
 # ── Config ───────────────────────────────────────────────────────
 BATCH_SIZE = 10           # tickers processed concurrently per batch
-RATE_LIMIT_DELAY = 1.0    # 1s between batches (was 50ms — too aggressive)
-MAX_CONCURRENT = 10       # semaphore: max simultaneous FMP HTTP requests
+RATE_LIMIT_DELAY = 1.0    # 1s between batches
+MAX_CONCURRENT = 3        # semaphore: max simultaneous FMP HTTP requests
+REQUEST_THROTTLE = 0.35   # seconds to wait before each API call (≈ 3 req/s per slot)
 PROFILE_BATCH_SIZE = 20   # symbols per batch-profile API call
 
 # Lazy semaphore (created inside async context)
@@ -99,6 +100,7 @@ async def _get(client: httpx.AsyncClient, url: str, params: dict) -> dict | list
     params["apikey"] = FMP_API_KEY
     endpoint = url.rsplit("/", 1)[-1]
     async with _sem():
+        await asyncio.sleep(REQUEST_THROTTLE)  # proactive throttle to avoid 429
         for attempt in range(3):
             try:
                 r = await client.get(url, params=params, timeout=30)
