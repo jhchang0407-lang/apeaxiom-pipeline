@@ -7,6 +7,13 @@ For Modal deployment, reads from Modal Secrets.
 import os
 from pathlib import Path
 
+# Load .env file if present (local development)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+except ImportError:
+    pass
+
 
 # --- SEC EDGAR ---
 # SEC modules are called directly (no HTTP server needed).
