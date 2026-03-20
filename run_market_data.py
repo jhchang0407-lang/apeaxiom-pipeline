@@ -45,8 +45,19 @@ from config.settings import (
 )
 
 # ── Config ───────────────────────────────────────────────────────
-BATCH_SIZE = 20          # concurrent FMP requests per batch
-RATE_LIMIT_DELAY = 0.05  # 50ms between batches (~20 req/s, well under FMP limit)
+BATCH_SIZE = 10           # tickers processed concurrently per batch
+RATE_LIMIT_DELAY = 1.0    # 1s between batches (was 50ms — too aggressive)
+MAX_CONCURRENT = 10       # semaphore: max simultaneous FMP HTTP requests
+PROFILE_BATCH_SIZE = 20   # symbols per batch-profile API call
+
+# Lazy semaphore (created inside async context)
+_REQUEST_SEM: asyncio.Semaphore | None = None
+
+def _sem() -> asyncio.Semaphore:
+    global _REQUEST_SEM
+    if _REQUEST_SEM is None:
+        _REQUEST_SEM = asyncio.Semaphore(MAX_CONCURRENT)
+    return _REQUEST_SEM
 
 
 # ── R2 Upload ────────────────────────────────────────────────────
@@ -86,18 +97,49 @@ def upload_to_r2(data: Any, prefix: str, filename: str, dry_run: bool = False) -
 # ── FMP Fetchers ─────────────────────────────────────────────────
 async def _get(client: httpx.AsyncClient, url: str, params: dict) -> dict | list | None:
     params["apikey"] = FMP_API_KEY
-    try:
-        r = await client.get(url, params=params, timeout=30)
-        r.raise_for_status()
-        return r.json()
-    except Exception as e:
-        return None
+    endpoint = url.rsplit("/", 1)[-1]
+    async with _sem():
+        for attempt in range(3):
+            try:
+                r = await client.get(url, params=params, timeout=30)
+                if r.status_code == 429:
+                    wait = int(r.headers.get("Retry-After", "60"))
+                    print(f"\n  ⚠  Rate limited ({endpoint}) — waiting {wait}s ...", flush=True)
+                    await asyncio.sleep(wait)
+                    continue
+                r.raise_for_status()
+                return r.json()
+            except httpx.HTTPStatusError as e:
+                print(f"\n  ✗ HTTP {e.response.status_code} for {endpoint}", flush=True)
+                return None
+            except Exception:
+                return None
+    return None
 
 async def fetch_profile(client: httpx.AsyncClient, ticker: str) -> dict:
     data = await _get(client, f"{FMP_BASE_URL}/profile", {"symbol": ticker})
     if data and isinstance(data, list) and data:
         return data[0]
     return {}
+
+async def fetch_profiles_batch(client: httpx.AsyncClient, tickers: list[str]) -> dict[str, dict]:
+    """Fetch up to PROFILE_BATCH_SIZE profiles in one API call. Returns {ticker: profile_dict}."""
+    data = await _get(client, f"{FMP_BASE_URL}/profile", {"symbol": ",".join(tickers)})
+    out: dict[str, dict] = {}
+    if data and isinstance(data, list):
+        for item in data:
+            sym = item.get("symbol", "")
+            if sym:
+                out[sym] = item
+    # Individual fallback for any missing tickers
+    missing = [t for t in tickers if t not in out]
+    if missing:
+        tasks = [fetch_profile(client, t) for t in missing]
+        fallbacks = await asyncio.gather(*tasks)
+        for t, p in zip(missing, fallbacks):
+            if p:
+                out[t] = p
+    return out
 
 async def fetch_income_quarterly(client: httpx.AsyncClient, ticker: str) -> list:
     data = await _get(client, f"{FMP_BASE_URL}/income-statement",
@@ -249,10 +291,17 @@ async def fetch_ticker_data(
     client: httpx.AsyncClient,
     ticker: str,
     include_prices: bool = True,
+    prefetched_profile: dict | None = None,
 ) -> dict:
-    """Fetch all data for one ticker concurrently."""
-    tasks = [
-        fetch_profile(client, ticker),
+    """Fetch all data for one ticker concurrently.
+
+    If prefetched_profile is provided, skips the /profile API call (saves 1 call/ticker).
+    """
+    tasks: list = []
+    fetch_profile_here = prefetched_profile is None
+    if fetch_profile_here:
+        tasks.append(fetch_profile(client, ticker))
+    tasks += [
         fetch_income_quarterly(client, ticker),
         fetch_cashflow_quarterly(client, ticker),
         fetch_income_annual(client, ticker),
@@ -263,13 +312,20 @@ async def fetch_ticker_data(
 
     results = await asyncio.gather(*tasks)
 
+    offset = 0
+    if fetch_profile_here:
+        profile = results[0]
+        offset = 1
+    else:
+        profile = prefetched_profile
+
     return {
-        "profile":    results[0],
-        "income_q":   results[1],
-        "cashflow_q": results[2],
-        "income_a":   results[3],
-        "key_metrics": results[4],
-        "prices":     results[5] if include_prices else [],
+        "profile":     profile,
+        "income_q":    results[offset],
+        "cashflow_q":  results[offset + 1],
+        "income_a":    results[offset + 2],
+        "key_metrics": results[offset + 3],
+        "prices":      results[offset + 4] if include_prices else [],
     }
 
 
@@ -277,21 +333,39 @@ async def fetch_all_tickers(
     tickers: list[str],
     include_prices: bool = True,
 ) -> dict[str, dict]:
-    """Fetch all tickers in parallel batches."""
+    """Fetch all tickers in parallel batches with rate-limit-safe concurrency."""
     results = {}
     total = len(tickers)
     async with httpx.AsyncClient() as client:
+
+        # ── Step 1: Batch-fetch all profiles (1 call per 20 tickers) ──
+        print(f"  Pre-fetching {total} profiles in batches of {PROFILE_BATCH_SIZE}...")
+        all_profiles: dict[str, dict] = {}
+        for i in range(0, total, PROFILE_BATCH_SIZE):
+            batch = tickers[i:i + PROFILE_BATCH_SIZE]
+            batch_profiles = await fetch_profiles_batch(client, batch)
+            all_profiles.update(batch_profiles)
+            if i + PROFILE_BATCH_SIZE < total:
+                await asyncio.sleep(RATE_LIMIT_DELAY)
+        ok = sum(1 for p in all_profiles.values() if p)
+        print(f"  Profiles: {ok}/{total} fetched")
+
+        # ── Step 2: Fetch financial data (income, cashflow, key-metrics, prices) ──
         for i in range(0, total, BATCH_SIZE):
             batch = tickers[i:i + BATCH_SIZE]
             batch_tasks = [
-                fetch_ticker_data(client, t, include_prices=include_prices)
+                fetch_ticker_data(
+                    client, t,
+                    include_prices=include_prices,
+                    prefetched_profile=all_profiles.get(t),
+                )
                 for t in batch
             ]
             batch_results = await asyncio.gather(*batch_tasks)
             for ticker, data in zip(batch, batch_results):
                 results[ticker] = data
             done = min(i + BATCH_SIZE, total)
-            print(f"  Fetched {done}/{total} tickers...", end="\r")
+            print(f"  Financial data: {done}/{total} tickers...", end="\r", flush=True)
             if i + BATCH_SIZE < total:
                 await asyncio.sleep(RATE_LIMIT_DELAY)
     print()
