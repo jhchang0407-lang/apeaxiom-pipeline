@@ -198,7 +198,8 @@ def calc_dashboard_metrics(
     market_cap    = p.get("marketCap") or km.get("marketCap")
     price         = p.get("price")
     div_per_share = p.get("lastDividend")
-    div_yield     = round(div_per_share / price * 100, 4) if div_per_share and price else None
+    # React multiplies by 100 for display, so store as decimal (not percent)
+    div_yield     = round(div_per_share / price, 6) if div_per_share and price else None
 
     exchange      = p.get("exchange")
     sector        = p.get("sector")
@@ -223,10 +224,10 @@ def calc_dashboard_metrics(
     # TTM FCF
     fcf_ttm = _ttm_sum(cashflow_q, "freeCashFlow")
 
-    # FCF Margin
+    # FCF Margin — store as decimal (React multiplies by 100 for display)
     fcf_margin = None
     if fcf_ttm is not None and rev_ttm and rev_ttm > 0:
-        fcf_margin = round(fcf_ttm / rev_ttm * 100, 2)
+        fcf_margin = round(fcf_ttm / rev_ttm, 4)
 
     # EPS TTM — sum quarterly epsDiluted (stable API uses camelCase D)
     eps_ttm = _ttm_sum(income_q, "epsDiluted")
@@ -247,7 +248,8 @@ def calc_dashboard_metrics(
         rev0 = income_a[0].get("revenue")
         rev1 = income_a[1].get("revenue")
         if rev0 and rev1 and rev1 != 0:
-            sales_growth_1yr = round((rev0 - rev1) / abs(rev1) * 100, 2)
+            # Decimal form — React multiplies by 100 for display
+            sales_growth_1yr = round((rev0 - rev1) / abs(rev1), 4)
 
     # EPS Growth (LY vs LY-1)
     eps_growth = None
@@ -255,7 +257,8 @@ def calc_dashboard_metrics(
         eps0 = income_a[0].get("epsDiluted")
         eps1 = income_a[1].get("epsDiluted")
         if eps0 is not None and eps1 and eps1 != 0:
-            eps_growth = round((eps0 - eps1) / abs(eps1) * 100, 2)
+            # Decimal form — React multiplies by 100 for display
+            eps_growth = round((eps0 - eps1) / abs(eps1), 4)
 
     # 1 Yr Price Change — calculated later from price history
     # (placeholder here, filled in after price fetch)
