@@ -23,7 +23,7 @@ import json
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import boto3
@@ -166,8 +166,10 @@ async def fetch_key_metrics_ttm(client: httpx.AsyncClient, ticker: str) -> dict:
     return {}
 
 async def fetch_historical_prices(client: httpx.AsyncClient, ticker: str) -> list:
+    # Use 'from' date instead of 'limit' — FMP stable ignores 'limit' for this endpoint
+    from_date = (datetime.now(timezone.utc) - timedelta(days=380)).strftime("%Y-%m-%d")
     data = await _get(client, f"{FMP_BASE_URL}/historical-price-eod/full",
-                      {"symbol": ticker, "limit": 252})
+                      {"symbol": ticker, "from": from_date})
     # stable API returns plain list
     if isinstance(data, list):
         return data
@@ -419,11 +421,17 @@ def build_dashboard_json(
 
 
 # ── Daily Price Builder ──────────────────────────────────────────
+BENCHMARK_COL = ".INX"  # column name React expects for S&P 500 comparison
+
 def build_price_json(
     tickers: list[str],
     all_data: dict[str, dict],
 ) -> list[dict]:
-    """Build daily price JSON: list of rows by date, each row has all ticker prices."""
+    """Build daily price JSON: list of rows by date, each row has all ticker prices.
+
+    Includes a '.INX' column for the S&P 500 benchmark (React price chart requirement).
+    Capped to the most recent 252 trading days.
+    """
 
     # Collect all dates across all tickers
     date_set: set[str] = set()
@@ -439,14 +447,24 @@ def build_price_json(
                 price_by_ticker[ticker][date] = close
                 date_set.add(date)
 
-    # Sort dates ascending (oldest first)
-    sorted_dates = sorted(date_set)
+    # Build benchmark (.INX) price map — dates from benchmark don't expand the date_set
+    benchmark_prices = all_data.get(BENCHMARK_COL, {}).get("prices", [])
+    price_by_ticker[BENCHMARK_COL] = {}
+    for bar in benchmark_prices:
+        date = bar.get("date")
+        close = bar.get("close") or bar.get("adjClose")
+        if date and close:
+            price_by_ticker[BENCHMARK_COL][date] = close
+
+    # Sort ascending and cap to last 252 trading days (FMP 'limit' param is unreliable)
+    sorted_dates = sorted(date_set)[-252:]
 
     rows = []
     for date in sorted_dates:
         row = {"date": date}
         for ticker in tickers:
             row[ticker] = price_by_ticker[ticker].get(date)
+        row[BENCHMARK_COL] = price_by_ticker[BENCHMARK_COL].get(date)
         rows.append(row)
 
     return rows
@@ -493,6 +511,18 @@ async def main():
     print(f"\nFetching data from FMP (batch size {BATCH_SIZE})...")
     all_data = await fetch_all_tickers(tickers, include_prices=run_prices)
     print(f"Fetch complete in {time.time()-t0:.0f}s")
+
+    # Fetch S&P 500 benchmark for price chart comparison (.INX column)
+    if run_prices:
+        print("\nFetching S&P 500 benchmark prices (.INX)...")
+        async with httpx.AsyncClient() as client:
+            # Try ^GSPC first, fall back to SPY
+            sp_prices = await fetch_historical_prices(client, "^GSPC")
+            if not sp_prices:
+                print("  ^GSPC returned empty — trying SPY...")
+                sp_prices = await fetch_historical_prices(client, "SPY")
+        all_data[BENCHMARK_COL] = {"prices": sp_prices}
+        print(f"  .INX: {len(sp_prices)} data points")
 
     now = datetime.now(timezone.utc)
     date_str = now.strftime("%m-%b %d, %Y-%y")
