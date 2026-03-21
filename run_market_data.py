@@ -166,16 +166,19 @@ async def fetch_key_metrics_ttm(client: httpx.AsyncClient, ticker: str) -> dict:
     return {}
 
 async def fetch_historical_prices(client: httpx.AsyncClient, ticker: str) -> list:
-    # Use 'from' date instead of 'limit' — FMP stable ignores 'limit' for this endpoint
+    # Use 'from' date to limit data — FMP stable ignores 'limit' for this endpoint
     from_date = (datetime.now(timezone.utc) - timedelta(days=380)).strftime("%Y-%m-%d")
     data = await _get(client, f"{FMP_BASE_URL}/historical-price-eod/full",
                       {"symbol": ticker, "from": from_date})
-    # stable API returns plain list
+    # stable API returns plain list (newest first); dict wrapper for older endpoints
     if isinstance(data, list):
-        return data
-    if isinstance(data, dict):
-        return data.get("historical", [])
-    return []
+        prices = data
+    elif isinstance(data, dict):
+        prices = data.get("historical", [])
+    else:
+        return []
+    # Hard cap at 252 rows (FMP sometimes ignores 'from'; avoids OOM with 500+ tickers)
+    return prices[:252]
 
 
 # ── Metric Calculators ───────────────────────────────────────────
@@ -522,7 +525,9 @@ async def main():
                 print("  ^GSPC returned empty — trying SPY...")
                 sp_prices = await fetch_historical_prices(client, "SPY")
         all_data[BENCHMARK_COL] = {"prices": sp_prices}
-        print(f"  .INX: {len(sp_prices)} data points")
+        n = len(sp_prices)
+        date_range = f"{sp_prices[-1]['date']} → {sp_prices[0]['date']}" if n >= 2 else "N/A"
+        print(f"  .INX: {n} rows  {date_range}")
 
     now = datetime.now(timezone.utc)
     date_str = now.strftime("%m-%b %d, %Y-%y")
