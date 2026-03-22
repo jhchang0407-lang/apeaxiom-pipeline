@@ -1,6 +1,7 @@
 [build]
-dockerfilePath = "Dockerfile"
+dockerfilePath = "Dockerfile.market_data"
 
 [deploy]
+startCommand = "python run_market_data.py"
 # Run daily at 10 AM UTC (2 AM PST) — matches n8n Master Automation schedule
 cronSchedule = "0 10 * * *"
