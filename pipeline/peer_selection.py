@@ -88,44 +88,16 @@ async def select_peers(
         f"Return the JSON peer list now."
     )
 
-    schema = {
-        "type": "json_schema",
-        "json_schema": {
-            "name": "peer_selection",
-            "strict": True,
-            "schema": {
-                "type": "object",
-                "properties": {
-                    "peers": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "symbol": {"type": "string"},
-                                "rationale": {"type": "string"},
-                            },
-                            "required": ["symbol", "rationale"],
-                            "additionalProperties": False,
-                        },
-                    },
-                },
-                "required": ["peers"],
-                "additionalProperties": False,
-            },
-        },
-    }
-
     client = openai.AsyncOpenAI(api_key=OPENAI_API_KEY)
 
     response = await client.chat.completions.create(
         model=model,
         messages=[
-            {"role": "system", "content": PEER_SELECTION_SYSTEM},
+            {"role": "system", "content": PEER_SELECTION_SYSTEM + '\n\nRespond with valid JSON only: {"peers": [{"symbol": "TICKER", "rationale": "reason"}, ...]}'},
             {"role": "user", "content": user_msg},
         ],
-        response_format=schema,
-        temperature=0.3,
-        max_completion_tokens=2048,
+        response_format={"type": "json_object"},
+        max_completion_tokens=8000,
     )
 
     content = response.choices[0].message.content
