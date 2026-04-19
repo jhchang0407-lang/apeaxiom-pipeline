@@ -98,6 +98,10 @@ async def run_single(ticker: str, quarter_hint: str | None, upload: bool) -> dic
                 ContentType="application/json",
             )
             print(f"  Uploaded to R2: {r2_key}")
+            # Update the _index.json so frontend finds it instantly
+            from run_memo import update_r2_index
+            update_r2_index(r2_key)
+            print(f"  Updated _index.json")
         except Exception as e:
             print(f"  R2 upload failed: {e}")
 

@@ -5,12 +5,12 @@ Replaces the n8n "Master Automation" workflow.
 
 Logic:
   1. Quarterly: Check FMP earnings calendar (3 days ago) → match against
-     "Earnings Ticker" watchlist from Google Sheets → run quarterly pipeline
+     S&P 500 ticker list (sp500_tickers.json) → run quarterly pipeline
      for each match.
 
   2. Full Memo: Check FMP 10-K filings (10 days ago) → match against
-     S&P 500 list from Google Sheets ("Test" tab) → trigger full memo
-     pipeline for each match via Modal webhook.
+     S&P 500 ticker list → trigger full memo pipeline for each match
+     via Modal webhook or locally.
 
 Usage:
     python run_master.py                  # run both checks
@@ -28,7 +28,6 @@ import sys
 import time
 from datetime import datetime, timedelta
 
-import gspread
 import httpx
 
 # Batch sizes — different concurrency per pipeline type
@@ -43,14 +42,8 @@ from config.settings import FMP_API_KEY, FMP_BASE_URL
 EARNINGS_LOOKBACK_DAYS = 3   # check earnings from 3 days ago
 TENK_LOOKBACK_DAYS = 10      # check 10-K filings from 10 days ago
 
-# Google Sheets
-SPREADSHEET_ID = "1C_zvwhm-UHbBCvVFXYyz1rWMsi3EdhxXGQ6B0qbzcyc"
-SP500_TAB = "Earnings Ticker"                # gid=1509867633 — full S&P 500 list
-
-GOOGLE_CREDS_PATH = os.getenv(
-    "GOOGLE_SERVICE_ACCOUNT_JSON",
-    os.path.join(os.path.dirname(__file__), "..", "openclaw", "credentials", "google-service-account.json"),
-)
+# S&P 500 ticker list (local JSON — no Google Sheets dependency)
+SP500_TICKERS_PATH = os.path.join(os.path.dirname(__file__), "sp500_tickers.json")
 
 # Modal webhook for full memos (from modal_app.py)
 MODAL_MEMO_WEBHOOK = os.getenv("MODAL_MEMO_WEBHOOK", "")
@@ -102,61 +95,12 @@ def fetch_tenk_filers(lookback_days: int) -> set[str]:
     return {item["symbol"].upper() for item in data if "symbol" in item}
 
 
-# ── Google Sheets ───────────────────────────────────────────────
+# ── S&P 500 Ticker List ────────────────────────────────────────
 
-def get_sheets_client():
-    """Authenticate with Google Sheets using service account.
-
-    Supports two modes:
-      - File path: GOOGLE_SERVICE_ACCOUNT_JSON points to a .json file (local dev)
-      - Inline JSON: GOOGLE_SERVICE_ACCOUNT_JSON contains the full JSON string (Railway/cloud)
-    """
-    creds_env = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "")
-
-    # If it looks like raw JSON (starts with {), parse it directly
-    if creds_env.strip().startswith("{"):
-        import json
-        from google.oauth2.service_account import Credentials
-
-        info = json.loads(creds_env)
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive",
-        ]
-        creds = Credentials.from_service_account_info(info, scopes=scopes)
-        return gspread.authorize(creds)
-
-    # Otherwise treat it as a file path
-    creds_path = os.path.abspath(GOOGLE_CREDS_PATH)
-    if not os.path.exists(creds_path):
-        print(f"ERROR: Google service account file not found at {creds_path}")
-        sys.exit(1)
-    return gspread.service_account(filename=creds_path)
-
-
-def fetch_sp500_list(gc) -> set[str]:
-    """Read S&P 500 ticker list from the 'Earnings Ticker' tab in Google Sheets.
-
-    Used for both quarterly earnings matching and full memo 10-K matching.
-    """
-    spreadsheet = gc.open_by_key(SPREADSHEET_ID)
-    worksheet = spreadsheet.worksheet(SP500_TAB)
-    records = worksheet.get_all_records()
-    # Extract ticker/symbol column (try common column names)
-    tickers = set()
-    for row in records:
-        for key in ("symbol", "Symbol", "ticker", "Ticker", "TICKER"):
-            if key in row and row[key]:
-                tickers.add(str(row[key]).upper().strip())
-                break
-    # Fallback: if no records matched column names, try column A
-    if not tickers:
-        values = worksheet.col_values(1)
-        for v in values:
-            v = v.strip().upper()
-            if v and v not in ("SYMBOL", "TICKER"):
-                tickers.add(v)
-    return tickers
+def load_sp500_tickers() -> set[str]:
+    """Load S&P 500 ticker list from local JSON file."""
+    with open(SP500_TICKERS_PATH) as f:
+        return set(json.load(f))
 
 
 # ── Batching ────────────────────────────────────────────────────
@@ -267,11 +211,9 @@ def main():
     print(f"Master Automation — {now.strftime('%Y-%m-%d %H:%M')}")
     print("=" * 60)
 
-    gc = get_sheets_client()
-
-    # Fetch the S&P 500 list once — used for both checks
-    sp500 = fetch_sp500_list(gc)
-    print(f"\n   S&P 500 list ({SP500_TAB}): {len(sp500)} tickers")
+    # Load the S&P 500 list from local JSON — used for both checks
+    sp500 = load_sp500_tickers()
+    print(f"\n   S&P 500 list: {len(sp500)} tickers")
 
     # ── Phase 1: Quarterly earnings check ──────────────────────
     # Runs FIRST and must fully complete before memos start

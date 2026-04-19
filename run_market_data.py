@@ -95,6 +95,35 @@ def upload_to_r2(data: Any, prefix: str, filename: str, dry_run: bool = False) -
     return key
 
 
+def _update_r2_index(r2_key: str) -> None:
+    """Update _index.json in R2 so the frontend finds the latest file instantly."""
+    s3 = _r2_client()
+    try:
+        resp = s3.get_object(Bucket=CF_R2_BUCKET, Key="_index.json")
+        index = json.loads(resp["Body"].read())
+    except Exception:
+        index = {}
+
+    parts = r2_key.split("/")
+    data_type = parts[0]  # "Dashboard" or "Daily Price"
+    ticker = "_"  # these are global, not per-ticker
+
+    if data_type not in index:
+        index[data_type] = {}
+
+    # Always update — this cron runs once daily, so latest upload is always newest.
+    # (Lexicographic comparison broke when day-padding changed, e.g. "Apr 2" > "Apr 03".)
+    index[data_type][ticker] = r2_key
+
+    s3.put_object(
+        Bucket=CF_R2_BUCKET,
+        Key="_index.json",
+        Body=json.dumps(index, indent=2).encode(),
+        ContentType="application/json",
+    )
+    print(f"  ✅ Updated _index.json ({data_type})")
+
+
 # ── FMP Fetchers ─────────────────────────────────────────────────
 async def _get(client: httpx.AsyncClient, url: str, params: dict) -> dict | list | None:
     params["apikey"] = FMP_API_KEY
@@ -536,13 +565,17 @@ async def main():
         print("\nBuilding dashboard JSON...")
         dashboard = build_dashboard_json(tickers, all_data)
         r2_prefix, filename = _build_filename("dashboard")
-        upload_to_r2(dashboard, r2_prefix, filename, dry_run=args.dry_run)
+        key = upload_to_r2(dashboard, r2_prefix, filename, dry_run=args.dry_run)
+        if not args.dry_run:
+            _update_r2_index(key)
 
     if run_prices:
         print("\nBuilding daily price JSON...")
         prices = build_price_json(tickers, all_data)
         r2_prefix, filename = _build_filename("prices")
-        upload_to_r2(prices, r2_prefix, filename, dry_run=args.dry_run)
+        key = upload_to_r2(prices, r2_prefix, filename, dry_run=args.dry_run)
+        if not args.dry_run:
+            _update_r2_index(key)
 
     print(f"\nDone in {time.time()-t0:.0f}s total")
 

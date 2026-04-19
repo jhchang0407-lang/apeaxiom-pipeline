@@ -7,8 +7,8 @@ website Memo/
 │
 ├── run_master.py            ← CRON: Daily automation trigger
 │                              Checks FMP for new earnings (3d) & 10-K filings (10d),
-│                              matches against S&P 500 list, triggers quarterly & memo
-│                              pipelines in batches of 2
+│                              matches against sp500_tickers.json, triggers quarterly
+│                              & memo pipelines in batches of 2
 │
 ├── run_memo.py              ← ENTRY: Full memo pipeline (Modal cloud deployment)
 │                              Runs full 10-K research memo → uploads JSON to R2
@@ -18,9 +18,13 @@ website Memo/
 │                              Runs quarterly earnings report → uploads JSON to R2
 │                              Called by run_master.py or standalone
 │
-├── run_dashboard.py         ← CRON: Google Sheets → R2 uploader
-│                              Reads "Daily Price Sheet" & "Daily Mkt Cap" tabs,
-│                              converts to JSON, uploads to Cloudflare R2
+├── run_market_data.py       ← CRON: FMP → R2 market data uploader
+│                              Pulls prices & metrics from FMP, calculates in Python,
+│                              uploads Dashboard/ and Daily Price/ JSON to R2
+│
+├── run_batch_sp500.py       ← BATCH: One-time backfill for all S&P 500 tickers
+│                              Reads sp500_tickers.json, runs memo pipeline for each,
+│                              uploads each to R2 with resume support
 │
 ├── config/
 │   ├── settings.py          ← API keys, R2 credentials, model config
@@ -168,27 +172,27 @@ website Memo/
         │
         ├──→ FMP Earnings Calendar (last 3 days)
         │         ∩
-        │    Google Sheets "Earnings Ticker" (S&P 500 list)
+        │    sp500_tickers.json (local S&P 500 list)
         │         │
         │         ▼
         │    Matches ──→ run_quarterly.py {ticker} (batches of 2)
         │
         └──→ FMP 10-K Filings (last 10 days)
                   ∩
-             Google Sheets "Earnings Ticker" (S&P 500 list)
+             sp500_tickers.json (local S&P 500 list)
                   │
                   ▼
              Matches ──→ run_memo.py {ticker} (batches of 2)
 ```
 
-### Dashboard Upload (`run_dashboard.py`)
+### Market Data Upload (`run_market_data.py`)
 
 ```
-  run_dashboard.py (daily cron)
+  run_market_data.py (daily cron)
         │
-        ├──→ Google Sheets "Daily Price Sheet" ──→ JSON ──→ R2: Daily Price/{yyyy}/{MM}/...
+        ├──→ FMP API → calculate metrics in Python ──→ R2: Dashboard/{yyyy}/{MM}/...
         │
-        └──→ Google Sheets "Daily Mkt Cap"     ──→ JSON ──→ R2: Dashboard/{yyyy}/{MM}/...
+        └──→ FMP API → 252 trading days closing prices ──→ R2: Daily Price/{yyyy}/{MM}/...
 ```
 
 ---
@@ -209,7 +213,7 @@ apeaxiom/
 
 | Job | Script | Schedule | What it does |
 |-----|--------|----------|-------------|
-| Dashboard | `python run_dashboard.py` | Daily 2am | Sheets → JSON → R2 |
+| Market Data | `python run_market_data.py` | Daily 2am | FMP → metrics + prices → R2 |
 | Master | `python run_master.py` | Daily 2am | Detect new earnings/10-Ks → trigger pipelines |
 | *(triggered)* | `python run_quarterly.py {ticker}` | On-demand | Quarterly earnings report → R2 |
 | *(triggered)* | `python run_memo.py {ticker}` | On-demand | Full 10-K research memo → R2 |
