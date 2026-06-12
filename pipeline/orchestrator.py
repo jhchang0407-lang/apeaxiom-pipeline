@@ -16,11 +16,10 @@ Supports two modes:
 
 from __future__ import annotations
 
-import asyncio
 import time
 from dataclasses import dataclass, field
-from typing import Any
 
+from config.settings import PEER_SELECTION_MODEL
 from pipeline.data_fetcher import PipelineData, fetch_all_data
 from pipeline.trace import PipelineTrace
 from pipeline.transforms import (
@@ -126,7 +125,7 @@ def _fill_gaps(sec_row: dict, fmp_row: dict, field_map: dict) -> int:
     return fills
 
 
-def _backfill_sec_from_fmp(data: "PipelineData") -> int:
+def _backfill_sec_from_fmp(data: "PipelineData", errors: list | None = None) -> int:
     """Backfill gaps in SEC financial statements with FMP data.
 
     Mutates data.sec_financials in place. After backfilling the raw
@@ -270,8 +269,9 @@ def _backfill_sec_from_fmp(data: "PipelineData") -> int:
 
         # Re-add FMP aliases
         _add_fmp_aliases(is_data, bs_data, cf_data)
-    except Exception:
-        pass  # Non-critical — ratios will just use existing data
+    except Exception as e:
+        if errors is not None:
+            errors.append(f"ratio recompute skipped: {e}")
 
     return total_fills
 
@@ -590,8 +590,8 @@ async def run_pipeline(
     result.errors.extend(data.fetch_errors)
 
     trace.checkpoint("fetch", {
-        "sec_annual_count": len(data.sec_financials) if data.sec_financials else 0,
-        "sec_quarterly_count": len(data.sec_quarterly) if data.sec_quarterly else 0,
+        "sec_annual_count": len((data.sec_financials or {}).get("income_statement", [])),
+        "sec_quarterly_count": len((data.sec_quarterly or {}).get("income_statement", [])),
         "fmp_profile": data.fmp_profile or {},
         "sec_segments": data.sec_segments or {},
         "fetch_errors": data.fetch_errors,
@@ -599,7 +599,7 @@ async def run_pipeline(
 
     # ── STAGE 1B: BACKFILL SEC GAPS WITH FMP ──────────────────
     try:
-        fmp_fills = _backfill_sec_from_fmp(data)
+        fmp_fills = _backfill_sec_from_fmp(data, errors=result.errors)
         if fmp_fills > 0:
             print(f"  ✓ FMP backfill: {fmp_fills} fields filled")
     except Exception as e:
@@ -690,14 +690,16 @@ async def run_pipeline(
             industry=ident.get("industry", ""),
             market_cap=ident.get("market_cap"),
             description=ident.get("description", ""),
-            model="gpt-5-mini",
+            model=PEER_SELECTION_MODEL,
             years=5,
         )
+
+        fs = result.formatted_facts
+        subject_overrides: dict = {}
 
         # Merge peer data into fact sheet
         if peer_result["peer_count"] > 0:
             pd = peer_result["peer_data"]
-            fs = result.formatted_facts
 
             # Replace the weak FMP peer data with LLM-curated peers
             fs["s12_peer_benchmarking"]["peers_full"] = {
@@ -716,7 +718,6 @@ async def run_pipeline(
             # peer comp tables (built by build_quantitative_facts) so the
             # subject row stays consistent with the rest of the memo.
             # FMP peer API computes ratios differently (e.g. ROIC, ROE).
-            subject_overrides: dict = {}
             for _tbl_key in ("profitability_comps", "growth_comps",
                              "valuation_comps", "leverage_comps",
                              "efficiency_comps", "returns_comps",
@@ -811,13 +812,13 @@ async def run_pipeline(
                         )
                         if reit_val:
                             fs["s12_peer_benchmarking"]["valuation_comps_reit"] = reit_val
-                except Exception:
-                    pass  # Non-critical — fall back to generic comps
+                except Exception as e:
+                    result.errors.append(f"REIT valuation comps skipped: {e}")
 
-            except ImportError:
-                pass  # Module not available
-            except Exception:
-                pass  # Non-critical — tables will just use existing data
+            except ImportError as e:
+                result.errors.append(f"peer comp table rebuild skipped: {e}")
+            except Exception as e:
+                result.errors.append(f"peer comp table rebuild skipped: {e}")
 
             # Update _raw snapshot so assembly reads enriched peer data
             # (clean_quantitative snapshots _raw BEFORE peer enrichment)
@@ -833,8 +834,6 @@ async def run_pipeline(
                            "price_to_earnings", "price_to_fcf", "fcf_yield_pct")
             }
 
-            result._peer_rationale = peer_result["peers_selected"]
-
             # ── Enrich sector KPIs with FMP data ────────────────────
             # The peer pipeline already fetched key-metrics/ratios for
             # the subject company.  Use this to fill gaps in XBRL data
@@ -843,8 +842,8 @@ async def run_pipeline(
                 _enrich_sector_kpis_from_fmp(
                     fs, ticker.upper(), pd,
                 )
-            except Exception:
-                pass  # Non-critical
+            except Exception as e:
+                result.errors.append(f"sector KPI enrichment skipped: {e}")
 
         # Trace: snapshot the peer rebuild results
         _val_comps = fs.get("s12_peer_benchmarking", {}).get("valuation_comps", [])
@@ -879,7 +878,6 @@ async def run_pipeline(
         from pipeline.formatters import (
             format_markdown,
             format_html,
-            format_discord_scorecard,
             build_financial_appendix,
             build_scorecard_json,
             format_discord_scorecard_v2,
@@ -915,13 +913,7 @@ async def run_pipeline(
 
         # Run the 3-stage writing pipeline
         write_result = await write_all_sections(
-            fact_sheet=result.formatted_facts,
             section_inputs=section_inputs,
-            filing_text={
-                "10k": data.filing_10k,
-                "10q": data.filing_10q,
-            },
-            include_pricing=include_pricing,
         )
 
         result.section_outputs = write_result.get("section_outputs", {})
@@ -1095,7 +1087,7 @@ async def run_pipeline(
 
         # Build scorecard JSON
         # Personal mode: full scorecard with pricing + fair value
-        # Website mode: static analysis only (pricing comes from Google Sheets)
+        # Website mode: static analysis only (no pricing or price targets)
         scorecard_mode = "personal" if mode == "personal" else "website"
         result.scorecard_json = build_scorecard_json(
             fact_sheet=result.formatted_facts,
@@ -1302,14 +1294,14 @@ def _build_agent_prompts(
     try:
         tmpl = env.get_template("research_agent_1.jinja2")
         result["agent_1"] = tmpl.render(**common_vars)
-    except Exception as e:
+    except Exception:
         result["agent_1"] = ""
 
     # Agent 2: Deep Financial Analysis
     try:
         tmpl = env.get_template("research_agent_2.jinja2")
         result["agent_2"] = tmpl.render(**common_vars)
-    except Exception as e:
+    except Exception:
         result["agent_2"] = ""
 
     # Agent 3: Investment Decision & Risk
@@ -1343,7 +1335,7 @@ def _build_agent_prompts(
     try:
         tmpl = env.get_template("research_agent_3.jinja2")
         result["agent_3"] = tmpl.render(**agent3_vars)
-    except Exception as e:
+    except Exception:
         result["agent_3"] = ""
 
     return result

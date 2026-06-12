@@ -36,21 +36,11 @@ def compute_insurance_kpis(gaap: dict, years: int = 5) -> dict:
         "BenefitsLossesAndExpenses",
     ], years)
 
-    loss_adjustment_expense = extract_annual_values(gaap, [
-        "LossAndLossAdjustmentExpense",
-        "LiabilityForUnpaidClaimsAndClaimsAdjustmentExpense",
-    ], years)
-
     # ── Expenses ────────────────────────────────────────────────────────
     underwriting_expense = extract_annual_values(gaap, [
         "DeferredPolicyAcquisitionCostAmortizationExpense",
         "OtherUnderwritingExpense",
         "PolicyAcquisitionCosts",
-    ], years)
-
-    operating_expenses = extract_annual_values(gaap, [
-        "OperatingExpenses",
-        "OtherExpenses",
     ], years)
 
     # ── Investment Income ───────────────────────────────────────────────
@@ -83,10 +73,6 @@ def compute_insurance_kpis(gaap: dict, years: int = 5) -> dict:
     ], years)
 
     # ── Balance Sheet ───────────────────────────────────────────────────
-    total_assets = extract_annual_values(gaap, [
-        "Assets",
-    ], years)
-
     equity = extract_annual_values(gaap, [
         "StockholdersEquity",
         "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
@@ -94,12 +80,6 @@ def compute_insurance_kpis(gaap: dict, years: int = 5) -> dict:
 
     net_income = extract_annual_values(gaap, [
         "NetIncomeLoss",
-    ], years)
-
-    # Life-specific
-    policy_liabilities = extract_annual_values(gaap, [
-        "LiabilityForFuturePolicyBenefits",
-        "FuturePolicyBenefits",
     ], years)
 
     # ── Build raw KPIs ──────────────────────────────────────────────────
@@ -126,7 +106,6 @@ def compute_insurance_kpis(gaap: dict, years: int = 5) -> dict:
     ti_by_date = {e["date"]: e["val"] for e in total_investments}
     ni_by_date = {e["date"]: e["val"] for e in net_income}
     eq_by_date = {e["date"]: e["val"] for e in equity}
-    assets_by_date = {e["date"]: e["val"] for e in total_assets}
     reserves_by_date = {e["date"]: e["val"] for e in loss_reserves}
 
     pe_dates = sorted(pe_by_date.keys(), reverse=True)
@@ -139,7 +118,6 @@ def compute_insurance_kpis(gaap: dict, years: int = 5) -> dict:
         ti = ti_by_date.get(date)
         ni = ni_by_date.get(date)
         eq = eq_by_date.get(date)
-        assets = assets_by_date.get(date)
         reserves = reserves_by_date.get(date)
 
         # Loss ratio = claims / premiums earned
@@ -175,7 +153,7 @@ def compute_insurance_kpis(gaap: dict, years: int = 5) -> dict:
         # Reserve to premium ratio
         reserve_to_premium = safe_div(reserves, pe)
 
-        # Float (investable assets) = reserves + unearned premiums
+        # Float (investable assets) — approximated by loss reserves
         float_val = reserves if reserves else None
 
         # Float leverage = float / equity
@@ -184,20 +162,20 @@ def compute_insurance_kpis(gaap: dict, years: int = 5) -> dict:
         computed.append({
             "date": date,
             # Core insurance ratios
-            "lossRatio": round(loss_ratio, 4) if loss_ratio else None,
-            "expenseRatio": round(expense_ratio, 4) if expense_ratio else None,
-            "combinedRatio": round(combined_ratio, 4) if combined_ratio else None,
+            "lossRatio": round(loss_ratio, 4) if loss_ratio is not None else None,
+            "expenseRatio": round(expense_ratio, 4) if expense_ratio is not None else None,
+            "combinedRatio": round(combined_ratio, 4) if combined_ratio is not None else None,
             # Investment
-            "investmentYield": round(inv_yield, 4) if inv_yield else None,
+            "investmentYield": round(inv_yield, 4) if inv_yield is not None else None,
             # Returns
-            "roe": round(roe, 4) if roe else None,
+            "roe": round(roe, 4) if roe is not None else None,
             # Growth
-            "premiumsEarnedGrowth": round(pe_growth, 4) if pe_growth else None,
-            "premiumsWrittenGrowth": round(pw_growth, 4) if pw_growth else None,
+            "premiumsEarnedGrowth": round(pe_growth, 4) if pe_growth is not None else None,
+            "premiumsWrittenGrowth": round(pw_growth, 4) if pw_growth is not None else None,
             # Leverage & reserves
-            "premiumsToEquity": round(premiums_to_equity, 4) if premiums_to_equity else None,
-            "reserveToPremium": round(reserve_to_premium, 4) if reserve_to_premium else None,
-            "floatLeverage": round(float_leverage, 4) if float_leverage else None,
+            "premiumsToEquity": round(premiums_to_equity, 4) if premiums_to_equity is not None else None,
+            "reserveToPremium": round(reserve_to_premium, 4) if reserve_to_premium is not None else None,
+            "floatLeverage": round(float_leverage, 4) if float_leverage is not None else None,
         })
 
     kpis["computedRatios"] = computed

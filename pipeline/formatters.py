@@ -1,15 +1,8 @@
 """Output Formatters — Stage 5 of the pipeline.
 
-Ports the Formatter.js (168 lines) quarterly section builder to Python
-and adds full-memo markdown, HTML, Discord scorecard, and financial
-appendix formatters.
-
-Source n8n nodes -> Python functions:
-  Formatter.js               -> format_quarterly_section()
-  (new)                      -> format_markdown()
-  (new)                      -> format_html()
-  (new)                      -> format_discord_scorecard()
-  (new)                      -> build_financial_appendix()
+Full-memo markdown, HTML, Discord scorecard, and financial appendix
+formatters: format_quarterly_section(), format_markdown(),
+format_html(), format_discord_scorecard_v2(), build_financial_appendix().
 """
 
 from __future__ import annotations
@@ -244,20 +237,21 @@ def format_quarterly_section(
 # ====================================================================
 
 # Canonical section ordering and titles (sections 1-14)
+# Keep in sync with assembly.SECTION_FORMATS
 _SECTION_META: list[tuple[int, str]] = [
     (1, "Executive Summary & Investment Thesis"),
-    (2, "Company Overview & Capital Structure"),
-    (3, "Industry & Competitive Landscape"),
-    (4, "Revenue Analysis"),
-    (5, "Profitability & Margin Analysis"),
-    (6, "Competitive Positioning"),
-    (7, "Working Capital & Cash Conversion"),
-    (8, "Management Assessment"),
-    (9, "Capital Allocation & Shareholder Returns"),
-    (10, "Guidance & Forward Estimates"),
-    (11, "Financial Statements Deep Dive"),
-    (12, "Peer Benchmarking"),
-    (13, "Valuation"),
+    (2, "Company Overview"),
+    (3, "Company History & Key Milestones"),
+    (4, "Product & Technology Strategy"),
+    (5, "Competitive Moats"),
+    (6, "Industry & Competitive Dynamics"),
+    (7, "Customer Analysis"),
+    (8, "Management & Capital Allocation"),
+    (9, "Growth Prospects & Catalysts"),
+    (10, "Financial Analysis"),
+    (11, "Peer Financial Benchmarking"),
+    (12, "Valuation Analysis"),
+    (13, "Risk Assessment"),
     (14, "Conclusion"),
 ]
 
@@ -447,6 +441,17 @@ _CSS = """
 """
 
 
+def _split_md_row(row: str) -> list[str]:
+    """Split a markdown table row into cells, preserving interior empties."""
+    cells = [c.strip() for c in row.split("|")]
+    # Drop only the empty edge cells from the leading/trailing pipes
+    if cells and cells[0] == "":
+        cells = cells[1:]
+    if cells and cells[-1] == "":
+        cells = cells[:-1]
+    return cells
+
+
 def _md_table_to_html(md: str) -> str:
     """Convert a markdown table string to an HTML <table>."""
     lines = [ln.strip() for ln in md.strip().split("\n") if ln.strip()]
@@ -454,7 +459,7 @@ def _md_table_to_html(md: str) -> str:
         return f"<p>{html_mod.escape(md)}</p>"
 
     # Header row
-    header_cells = [c.strip() for c in lines[0].split("|") if c.strip()]
+    header_cells = _split_md_row(lines[0])
     # Skip separator row (lines[1])
     body_rows = lines[2:]
 
@@ -464,7 +469,7 @@ def _md_table_to_html(md: str) -> str:
     out.append("</tr></thead>")
     out.append("<tbody>")
     for row_line in body_rows:
-        cells = [c.strip() for c in row_line.split("|") if c.strip()]
+        cells = _split_md_row(row_line)
         out.append("<tr>")
         for cell in cells:
             out.append(f"  <td>{html_mod.escape(cell)}</td>")
@@ -587,75 +592,6 @@ def format_html(memo_result: Any) -> str:
         f"{body}\n"
         "</body>\n</html>"
     )
-
-
-# ====================================================================
-# DISCORD SCORECARD (2000-char limit)
-# ====================================================================
-
-def format_discord_scorecard(data_block: dict[str, Any]) -> str:
-    """Build a compact scorecard for Discord (max 2000 chars).
-
-    Args:
-        data_block: Dict with keys like ticker, company_name, scores,
-            headline (revenue, eps, beat/miss), recommendation, and
-            price_target.
-
-    Returns:
-        Discord-formatted string under 2000 characters.
-    """
-    ticker = data_block.get("ticker", "???")
-    company = data_block.get("company_name", ticker)
-    scores = data_block.get("scores", {})
-    headline = data_block.get("headline", {})
-    recommendation = data_block.get("recommendation", "")
-    price_target = data_block.get("price_target", "")
-    thesis = data_block.get("thesis", "")
-    quarter_label = data_block.get("quarter_label", "")
-
-    lines: list[str] = []
-    lines.append(f"**{company} ({ticker})**")
-    if quarter_label:
-        lines.append(f"_{quarter_label}_")
-    lines.append("")
-
-    # Headline numbers
-    if headline:
-        rev = headline.get("revenue", "")
-        eps = headline.get("eps", "")
-        beat = headline.get("beat_miss", "")
-        if rev:
-            lines.append(f"Revenue: {rev}")
-        if eps:
-            lines.append(f"EPS: {eps}")
-        if beat:
-            lines.append(f"Beat/Miss: {beat}")
-        lines.append("")
-
-    # Scores
-    if scores:
-        lines.append("**Scores**")
-        for k, v in scores.items():
-            label = k.replace("_", " ").title()
-            lines.append(f"  {label}: {v}")
-        lines.append("")
-
-    # Recommendation
-    if recommendation:
-        lines.append(f"**Recommendation:** {recommendation}")
-    if price_target:
-        lines.append(f"**Price Target:** {price_target}")
-    if thesis:
-        lines.append("")
-        lines.append(f"_{thesis}_")
-
-    result = "\n".join(lines)
-
-    # Hard cap at 2000 characters for Discord
-    if len(result) > 2000:
-        result = result[:1997] + "..."
-
-    return result
 
 
 # ====================================================================

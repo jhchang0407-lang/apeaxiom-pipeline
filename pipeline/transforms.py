@@ -1,16 +1,9 @@
 """Data Transforms — Stage 2 of the pipeline.
 
-Ports all JavaScript pivot/flatten/clean/normalize code nodes to Python.
-Each function corresponds to a specific n8n code node.
-
-Source n8n nodes → Python functions:
-  n8n_fy_financials_pivot.js  → pivot_annual()
-  Quarterly_Financials.js     → pivot_quarterly()
-  Earnings_Estimate.js        → pivot_estimates()
-  Earning_Surprises1.js       → pivot_surprises()
-  Owner_Earnings.js           → pivot_owner_earnings()
-  Clean_Segments.js           → normalize_segments()
-  Currency_Injector.js        → inject_currency()
+Pivot/flatten/clean/normalize steps that reshape raw SEC + FMP data
+into the fact-sheet structures the section writers consume:
+pivot_annual(), pivot_quarterly(), pivot_estimates(), pivot_surprises(),
+pivot_owner_earnings(), normalize_segments(), inject_currency().
 """
 
 from __future__ import annotations
@@ -29,7 +22,6 @@ METADATA_KEYS = {
 
 # ============================================================
 # ANNUAL FINANCIALS PIVOT
-# From: n8n_fy_financials_pivot.js (110 lines)
 # Input: SEC API /financials response + /segments response
 # Output: List of dicts, each { metric, symbol, "YYYY FY": value }
 # ============================================================
@@ -744,10 +736,7 @@ def aggregate_quantitative(
     owner_earnings: list[dict],
     peers: list[dict],
 ) -> dict:
-    """Combine all pivoted data silos into one structure.
-
-    This replaces the Full Quantitative n8n code node.
-    """
+    """Combine all pivoted data silos into one structure."""
     return {
         "annual_financials": annual,
         "quarterly_financials": quarterly,

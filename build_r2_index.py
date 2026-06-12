@@ -22,20 +22,7 @@ _here = os.path.dirname(os.path.abspath(__file__))
 if _here not in sys.path:
     sys.path.insert(0, _here)
 
-_R2_ENDPOINT = "https://f3a5563fca3d8d1165c35edaa8c2cc48.r2.cloudflarestorage.com"
-
-
-def get_s3_client():
-    import boto3
-    from config.settings import CF_R2_ACCESS_KEY, CF_R2_SECRET_KEY
-
-    return boto3.client(
-        "s3",
-        endpoint_url=_R2_ENDPOINT,
-        aws_access_key_id=CF_R2_ACCESS_KEY,
-        aws_secret_access_key=CF_R2_SECRET_KEY,
-        region_name="auto",
-    )
+from config.r2 import get_r2_client
 
 
 def list_all_objects(s3, bucket: str) -> list[dict]:
@@ -74,6 +61,9 @@ def build_index(objects: list[dict]) -> dict:
 
         data_type = parts[0]
 
+        if modified is None:
+            continue
+
         if data_type in ("Memo", "Quarterly"):
             if len(parts) >= 4:
                 ticker = parts[3]
@@ -90,8 +80,6 @@ def build_index(objects: list[dict]) -> dict:
     return {dtype: {ticker: val[1] for ticker, val in tickers.items()}
             for dtype, tickers in groups.items()}
 
-    return dict(groups)
-
 
 def main():
     parser = argparse.ArgumentParser()
@@ -100,7 +88,7 @@ def main():
 
     from config.settings import CF_R2_BUCKET
 
-    s3 = get_s3_client()
+    s3 = get_r2_client()
     print(f"Listing objects in bucket: {CF_R2_BUCKET}")
     objects = list_all_objects(s3, CF_R2_BUCKET)
     print(f"Found {len(objects)} objects")

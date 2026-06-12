@@ -3,7 +3,7 @@
 Detects a company's sector from its SIC code and dispatches to the
 appropriate sector module for specialized KPI extraction.
 
-Supports an optional sector_override parameter so n8n can pass FMP's
+Supports an optional sector_override parameter so callers can pass FMP's
 sector/industry classification when SIC codes don't map well.
 """
 

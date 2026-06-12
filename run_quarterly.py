@@ -75,15 +75,7 @@ async def run_single(ticker: str, quarter_hint: str | None, upload: bool) -> dic
     # ── Upload to R2 (optional) ──────────────────────────────────
     if upload:
         try:
-            import boto3
-            from config.settings import CF_R2_ENDPOINT, CF_R2_ACCESS_KEY, CF_R2_SECRET_KEY, CF_R2_BUCKET
-
-            s3 = boto3.client(
-                "s3",
-                endpoint_url=CF_R2_ENDPOINT,
-                aws_access_key_id=CF_R2_ACCESS_KEY,
-                aws_secret_access_key=CF_R2_SECRET_KEY,
-            )
+            from config.r2 import upload_to_r2, update_r2_index
 
             r2_key = (
                 f"Quarterly/{now.year}/{now.strftime('%m')}/"
@@ -91,15 +83,12 @@ async def run_single(ticker: str, quarter_hint: str | None, upload: bool) -> dic
                 f"{date_stamp}.json"
             )
 
-            s3.put_object(
-                Bucket=CF_R2_BUCKET,
-                Key=r2_key,
-                Body=json.dumps(result.payload, indent=2, default=str).encode(),
-                ContentType="application/json",
+            upload_to_r2(
+                json.dumps(result.payload, indent=2, default=str).encode(),
+                r2_key,
             )
             print(f"  Uploaded to R2: {r2_key}")
-            # Update the _index.json so frontend finds it instantly
-            from run_memo import update_r2_index
+            # Update the _index.json so the frontend finds it instantly
             update_r2_index(r2_key)
             print(f"  Updated _index.json")
         except Exception as e:

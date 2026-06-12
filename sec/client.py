@@ -3,29 +3,44 @@
 import hashlib
 import json
 import os
+import threading
 import time
 from pathlib import Path
 
 import httpx
 
+from config.settings import SEC_USER_AGENT
+
 CACHE_DIR = Path(__file__).resolve().parent.parent / "cache"
 CACHE_DIR.mkdir(exist_ok=True)
 
 EDGAR_BASE = "https://data.sec.gov"
-HEADERS = {"User-Agent": "OpenClaw Research support@openclaw.com"}
 
 # Ticker → CIK mapping cache (populated lazily)
 _cik_map: dict[str, int] | None = None
 _last_request_time: float = 0.0
+_rate_lock = threading.Lock()
+
+
+def require_sec_user_agent() -> str:
+    """Return the configured SEC User-Agent, failing fast if unset."""
+    if not SEC_USER_AGENT:
+        raise RuntimeError(
+            "SEC_USER_AGENT is not set — SEC requires a User-Agent with your "
+            "contact email, e.g. 'Jane Doe jane@example.com'. Set it in .env "
+            "(see .env.template)."
+        )
+    return SEC_USER_AGENT
 
 
 def _rate_limit():
     """SEC EDGAR allows 10 requests/sec. Enforce ~100ms between requests."""
     global _last_request_time
-    elapsed = time.time() - _last_request_time
-    if elapsed < 0.11:
-        time.sleep(0.11 - elapsed)
-    _last_request_time = time.time()
+    with _rate_lock:
+        elapsed = time.time() - _last_request_time
+        if elapsed < 0.11:
+            time.sleep(0.11 - elapsed)
+        _last_request_time = time.time()
 
 
 def _cache_path(key: str) -> Path:
@@ -39,13 +54,27 @@ def _cached_get(url: str, max_age_hours: int = 24) -> dict:
     if cp.exists():
         age_h = (time.time() - cp.stat().st_mtime) / 3600
         if age_h < max_age_hours:
-            return json.loads(cp.read_text())
+            try:
+                return json.loads(cp.read_text())
+            except json.JSONDecodeError:
+                pass  # corrupt cache file — refetch
 
-    _rate_limit()
-    r = httpx.get(url, headers=HEADERS, timeout=30)
-    r.raise_for_status()
-    data = r.json()
-    cp.write_text(json.dumps(data))
+    headers = {"User-Agent": require_sec_user_agent()}
+    for attempt in range(3):
+        _rate_limit()
+        try:
+            r = httpx.get(url, headers=headers, timeout=30)
+            r.raise_for_status()
+            data = r.json()
+            break
+        except httpx.HTTPError:
+            if attempt == 2:
+                raise
+            time.sleep(0.5 * (attempt + 1))
+
+    tmp = cp.with_name(cp.name + ".tmp")
+    tmp.write_text(json.dumps(data))
+    os.replace(tmp, cp)
     return data
 
 

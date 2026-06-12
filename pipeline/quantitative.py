@@ -25,14 +25,7 @@ import re
 from datetime import date
 from typing import Any
 
-
-# ── BANK TICKERS ─────────────────────────────────────────────────
-
-BANK_TICKERS = {
-    "JPM", "BAC", "WFC", "GS", "MS", "C", "USB", "PNC", "TFC",
-    "COF", "BK", "STT", "SCHW", "MTB", "RF", "CFG", "FITB",
-    "HBAN", "KEY", "WBS",
-}
+from config.settings import BANK_TICKERS
 
 
 # ── HELPER FUNCTIONS ─────────────────────────────────────────────
@@ -125,6 +118,45 @@ def _median(values: list) -> float | None:
     if len(cleaned) % 2:
         return _round(cleaned[mid], 2)
     return _round((cleaned[mid - 1] + cleaned[mid]) / 2, 2)
+
+
+# NM thresholds for capping extreme outliers in peer comp tables
+_NM_CAPS: dict[str, dict] = {
+    "price_to_earnings":    {"max": 150, "min": 0},
+    "price_to_fcf":         {"max": 150, "min": 0},
+    "ev_to_ebitda":         {"max": 100, "min": 0},
+    "ev_to_sales":          {"max": 50,  "min": 0},
+    "ev_to_fcf":            {"max": 200, "min": 0},
+    "revenue_growth_pct":          {"absMax": 500},
+    "operating_income_growth_pct": {"absMax": 500},
+    "eps_diluted_growth_pct":      {"absMax": 500},
+    "fcf_growth_pct":              {"absMax": 500},
+    "roe_pct":              {"absMax": 200},
+    "roic_pct":             {"absMax": 200},
+    "net_debt_to_ebitda":   {"max": 30, "min": -5},
+    "debt_to_equity":       {"max": 20, "min": -0.01},
+    "interest_coverage":    {"max": 200, "min": -200},
+}
+
+
+def _nm_cap(val: Any, field: str) -> Any:
+    """Return None if value exceeds NM thresholds."""
+    if val is None or field not in _NM_CAPS:
+        return val
+    try:
+        n = float(val)
+    except (TypeError, ValueError):
+        return val
+    if math.isnan(n):
+        return None
+    t = _NM_CAPS[field]
+    if "absMax" in t and abs(n) > t["absMax"]:
+        return None
+    if "max" in t and n > t["max"]:
+        return None
+    if "min" in t and n < t["min"]:
+        return None
+    return val
 
 
 # ── MAIN ENGINE ──────────────────────────────────────────────────
@@ -268,8 +300,6 @@ def build_quantitative_facts(data: dict) -> dict:
 
     prior_year = _year_offset(1)
     year2ago = _year_offset(2)
-    year3ago = _year_offset(3)
-    year4ago = _year_offset(4)
 
     last8q = sorted(quarterly_keys, reverse=True)[:8]
 
@@ -1038,43 +1068,6 @@ def build_quantitative_facts(data: dict) -> dict:
             "segment_concentration_pct": _subject_seg_concentration(),
         }
 
-        # NM thresholds for capping extreme outliers in peer comp tables
-        _NM_CAPS: dict[str, dict] = {
-            "price_to_earnings":    {"max": 150, "min": 0},
-            "price_to_fcf":         {"max": 150, "min": 0},
-            "ev_to_ebitda":         {"max": 100, "min": 0},
-            "ev_to_sales":          {"max": 50,  "min": 0},
-            "ev_to_fcf":            {"max": 200, "min": 0},
-            "revenue_growth_pct":          {"absMax": 500},
-            "operating_income_growth_pct": {"absMax": 500},
-            "eps_diluted_growth_pct":      {"absMax": 500},
-            "fcf_growth_pct":              {"absMax": 500},
-            "roe_pct":              {"absMax": 200},
-            "roic_pct":             {"absMax": 200},
-            "net_debt_to_ebitda":   {"max": 30, "min": -5},
-            "debt_to_equity":       {"max": 20, "min": -0.01},
-            "interest_coverage":    {"max": 200, "min": -200},
-        }
-
-        def _nm_cap(val: Any, field: str) -> Any:
-            """Return None if value exceeds NM thresholds."""
-            if val is None or field not in _NM_CAPS:
-                return val
-            try:
-                n = float(val)
-            except (TypeError, ValueError):
-                return val
-            if math.isnan(n):
-                return None
-            t = _NM_CAPS[field]
-            if "absMax" in t and abs(n) > t["absMax"]:
-                return None
-            if "max" in t and n > t["max"]:
-                return None
-            if "min" in t and n < t["min"]:
-                return None
-            return val
-
         def build_table(peer_mapper):
             """Build a comp table: [subject, ...peers, median]."""
             peer_rows = [peer_mapper(p) for p in lp]
@@ -1322,28 +1315,32 @@ def build_quantitative_facts(data: dict) -> dict:
 
         "s2_capital_structure": {
             "total_debt_usd_m": {
-                latest_year: _to_m(av("totalDebt", latest_year)),
-                prior_year: _to_m(av("totalDebt", prior_year)),
+                y: _to_m(av("totalDebt", y))
+                for y in (latest_year, prior_year) if y
             },
             "short_term_debt_usd_m": {
-                latest_year: _to_m(av("shortTermDebt", latest_year)),
+                y: _to_m(av("shortTermDebt", y))
+                for y in (latest_year,) if y
             },
             "long_term_debt_usd_m": {
-                latest_year: _to_m(av("longTermDebt", latest_year)),
+                y: _to_m(av("longTermDebt", y))
+                for y in (latest_year,) if y
             },
             "net_debt_usd_m": {
-                latest_year: _to_m(av("netDebt", latest_year)),
-                prior_year: _to_m(av("netDebt", prior_year)),
+                y: _to_m(av("netDebt", y))
+                for y in (latest_year, prior_year) if y
             },
             "total_equity_usd_m": {
-                latest_year: _to_m(av("totalStockholdersEquity", latest_year)),
+                y: _to_m(av("totalStockholdersEquity", y))
+                for y in (latest_year,) if y
             },
             "debt_to_equity_ratio": {
-                latest_year: _round(av("debtToEquityRatio", latest_year), 2),
-                prior_year: _round(av("debtToEquityRatio", prior_year), 2),
+                y: _round(av("debtToEquityRatio", y), 2)
+                for y in (latest_year, prior_year) if y
             },
             "cash_and_equivalents_usd_m": {
-                latest_year: _to_m(av("cashAndCashEquivalents", latest_year)),
+                y: _to_m(av("cashAndCashEquivalents", y))
+                for y in (latest_year,) if y
             },
         },
 
@@ -1962,42 +1959,6 @@ def build_peer_comp_tables(
         except (TypeError, ValueError):
             return None
 
-    # NM thresholds for capping extreme outliers
-    _NM_CAPS: dict[str, dict] = {
-        "price_to_earnings":    {"max": 150, "min": 0},
-        "price_to_fcf":         {"max": 150, "min": 0},
-        "ev_to_ebitda":         {"max": 100, "min": 0},
-        "ev_to_sales":          {"max": 50,  "min": 0},
-        "ev_to_fcf":            {"max": 200, "min": 0},
-        "revenue_growth_pct":          {"absMax": 500},
-        "operating_income_growth_pct": {"absMax": 500},
-        "eps_diluted_growth_pct":      {"absMax": 500},
-        "fcf_growth_pct":              {"absMax": 500},
-        "roe_pct":              {"absMax": 200},
-        "roic_pct":             {"absMax": 200},
-        "net_debt_to_ebitda":   {"max": 30, "min": -5},
-        "debt_to_equity":       {"max": 20, "min": -0.01},
-        "interest_coverage":    {"max": 200, "min": -200},
-    }
-
-    def _nm_cap2(val, field):
-        if val is None or field not in _NM_CAPS:
-            return val
-        try:
-            n = float(val)
-        except (TypeError, ValueError):
-            return val
-        if math.isnan(n):
-            return None
-        t = _NM_CAPS[field]
-        if "absMax" in t and abs(n) > t["absMax"]:
-            return None
-        if "max" in t and n > t["max"]:
-            return None
-        if "min" in t and n < t["min"]:
-            return None
-        return val
-
     def _build_table(peer_mapper, subject_mapper=None):
         """Build a comp table: [subject, ...peers, median]."""
         peer_rows = [peer_mapper(p) for p in latest_peers]
@@ -2010,7 +1971,7 @@ def build_peer_comp_tables(
             for field in list(row.keys()):
                 if field == "company":
                     continue
-                row[field] = _nm_cap2(row[field], field)
+                row[field] = _nm_cap(row[field], field)
 
         # Median row (computed AFTER NM capping so outliers don't skew)
         median_row = {"company": "Peer Median"}

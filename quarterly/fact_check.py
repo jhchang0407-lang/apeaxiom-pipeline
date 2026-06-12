@@ -1,7 +1,5 @@
 """Quarterly Fact Check — Deterministic number verification and patching.
 
-Ported from n8n Quarterly Fact Verify & Patch v2.
-
 Walks writer prose strings, extracts financial claims ($X.XB, X.X%, Xx),
 matches them against a value index built from raw facts + precomputed tables,
 patches close-but-wrong numbers, and flags unverifiable claims.

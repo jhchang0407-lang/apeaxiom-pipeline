@@ -1,13 +1,14 @@
 venv/
+.venv/
 __pycache__/
 *.pyc
+.pytest_cache/
 cache/
 output/
 test_output/
-website_backup_*/
 .DS_Store
 .env
 *.env
 .claude/
-sp500_batch.log
-sp500_progress.json
+*.log
+sp500_progress*.json

@@ -36,11 +36,6 @@ def compute_reit_kpis(gaap: dict, years: int = 5) -> dict:
         "RealEstateTaxExpense",
     ], years)
 
-    operating_expenses = extract_annual_values(gaap, [
-        "OperatingExpenses",
-        "CostsAndExpenses",
-    ], years)
-
     general_admin = extract_annual_values(gaap, [
         "GeneralAndAdministrativeExpense",
     ], years)
@@ -65,19 +60,10 @@ def compute_reit_kpis(gaap: dict, years: int = 5) -> dict:
     ], years)
 
     # ── Cash Flow ───────────────────────────────────────────────────────
-    ocf = extract_annual_values(gaap, [
-        "NetCashProvidedByUsedInOperatingActivities",
-    ], years)
-
     capex = extract_annual_values(gaap, [
         "PaymentsToAcquirePropertyPlantAndEquipment",
         "PaymentsToAcquireRealEstate",
         "PaymentsToAcquireAndDevelopRealEstate",
-    ], years)
-
-    acquisitions = extract_annual_values(gaap, [
-        "PaymentsToAcquireRealEstateHeldForInvestment",
-        "PaymentsToAcquireBusinessesNetOfCashAcquired",
     ], years)
 
     # ── Dividends ───────────────────────────────────────────────────────
@@ -112,22 +98,9 @@ def compute_reit_kpis(gaap: dict, years: int = 5) -> dict:
         "RealEstateInvestmentPropertyAtCost",
     ], years)
 
-    equity = extract_annual_values(gaap, [
-        "StockholdersEquity",
-        "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
-    ], years)
-
-    goodwill = extract_annual_values(gaap, [
-        "Goodwill",
-    ], years)
-
     # ── Shares ──────────────────────────────────────────────────────────
     shares = extract_annual_values(gaap, [
         "WeightedAverageNumberOfDilutedSharesOutstanding",
-    ], years)
-
-    shares_outstanding = extract_annual_values(gaap, [
-        "CommonStockSharesOutstanding",
     ], years)
 
     # ── Build raw KPIs ──────────────────────────────────────────────────
@@ -152,32 +125,28 @@ def compute_reit_kpis(gaap: dict, years: int = 5) -> dict:
     gains_by_date = {e["date"]: e["val"] for e in gains_on_sales}
     imp_by_date = {e["date"]: e["val"] for e in impairments}
     capex_by_date = {e["date"]: e["val"] for e in capex}
-    ocf_by_date = {e["date"]: e["val"] for e in ocf}
     div_by_date = {e["date"]: e["val"] for e in dividends}
     debt_by_date = {e["date"]: e["val"] for e in total_debt}
     ie_by_date = {e["date"]: e["val"] for e in interest_expense}
     shares_by_date = {e["date"]: e["val"] for e in shares}
     assets_by_date = {e["date"]: e["val"] for e in total_assets}
-    equity_by_date = {e["date"]: e["val"] for e in equity}
     prop_exp_by_date = {e["date"]: e["val"] for e in property_expenses}
     rental_by_date = {e["date"]: e["val"] for e in rental_revenue}
     ga_by_date = {e["date"]: e["val"] for e in general_admin}
 
-    rev_dates = sorted(rev_by_date.keys(), reverse=True)
-    for i, date in enumerate(sorted(ni_by_date.keys(), reverse=True)[:years]):
-        ni = ni_by_date.get(date, 0)
+    ni_dates = sorted(ni_by_date.keys(), reverse=True)
+    for i, date in enumerate(ni_dates[:years]):
+        ni = ni_by_date.get(date)
         da = da_by_date.get(date, 0)
         gains = gains_by_date.get(date, 0)
         imp = imp_by_date.get(date, 0)
         cx = capex_by_date.get(date, 0)
-        oc = ocf_by_date.get(date)
         div = div_by_date.get(date)
         debt = debt_by_date.get(date)
         ie = ie_by_date.get(date)
         shr = shares_by_date.get(date)
         rev = rev_by_date.get(date)
         assets = assets_by_date.get(date)
-        eq = equity_by_date.get(date)
         prop_exp = prop_exp_by_date.get(date)
         rental = rental_by_date.get(date)
         ga = ga_by_date.get(date)
@@ -213,8 +182,7 @@ def compute_reit_kpis(gaap: dict, years: int = 5) -> dict:
         noi_margin = safe_div(noi, rental or rev)
 
         # Same-property NOI growth (proxy using total NOI growth)
-        prior_idx = [j for j, d in enumerate(rev_dates) if d < date]
-        prior_date = rev_dates[prior_idx[0]] if prior_idx else None
+        prior_date = ni_dates[i + 1] if i + 1 < len(ni_dates) else None
         prior_rev = rev_by_date.get(prior_date) if prior_date else None
         prior_rental = rental_by_date.get(prior_date) if prior_date else None
         prior_prop = prop_exp_by_date.get(prior_date) if prior_date else None
@@ -225,7 +193,7 @@ def compute_reit_kpis(gaap: dict, years: int = 5) -> dict:
             prior_noi = prior_rev - prior_prop
         noi_growth = safe_div((noi - prior_noi), abs(prior_noi)) if noi and prior_noi else None
 
-        # Debt-to-EBITDA (use NOI + G&A as EBITDA proxy for REITs)
+        # Debt-to-EBITDA (use NOI - G&A as EBITDA proxy for REITs)
         ebitda_proxy = (noi or 0) - (ga or 0) if noi else None
         debt_to_ebitda = safe_div(debt, ebitda_proxy) if ebitda_proxy and ebitda_proxy > 0 else None
 
@@ -242,23 +210,23 @@ def compute_reit_kpis(gaap: dict, years: int = 5) -> dict:
         computed.append({
             "date": date,
             # Core REIT metrics
-            "ffo": round(ffo) if ffo else None,
-            "affo": round(affo) if affo else None,
-            "ffoPerShare": round(ffo_per_share, 2) if ffo_per_share else None,
-            "affoPerShare": round(affo_per_share, 2) if affo_per_share else None,
-            "noi": round(noi) if noi else None,
+            "ffo": round(ffo) if ffo is not None else None,
+            "affo": round(affo) if affo is not None else None,
+            "ffoPerShare": round(ffo_per_share, 2) if ffo_per_share is not None else None,
+            "affoPerShare": round(affo_per_share, 2) if affo_per_share is not None else None,
+            "noi": round(noi) if noi is not None else None,
             # Margins & growth
-            "noiMargin": round(noi_margin, 4) if noi_margin else None,
-            "noiGrowth": round(noi_growth, 4) if noi_growth else None,
+            "noiMargin": round(noi_margin, 4) if noi_margin is not None else None,
+            "noiGrowth": round(noi_growth, 4) if noi_growth is not None else None,
             # Payout
-            "ffoPayoutRatio": round(ffo_payout, 4) if ffo_payout else None,
-            "affoPayoutRatio": round(affo_payout, 4) if affo_payout else None,
+            "ffoPayoutRatio": round(ffo_payout, 4) if ffo_payout is not None else None,
+            "affoPayoutRatio": round(affo_payout, 4) if affo_payout is not None else None,
             # Leverage
-            "debtToEbitda": round(debt_to_ebitda, 2) if debt_to_ebitda else None,
-            "debtToAssets": round(debt_to_assets, 4) if debt_to_assets else None,
-            "interestCoverage": round(interest_coverage, 2) if interest_coverage else None,
+            "debtToEbitda": round(debt_to_ebitda, 2) if debt_to_ebitda is not None else None,
+            "debtToAssets": round(debt_to_assets, 4) if debt_to_assets is not None else None,
+            "interestCoverage": round(interest_coverage, 2) if interest_coverage is not None else None,
             # Valuation
-            "capRateProxy": round(cap_rate, 4) if cap_rate else None,
+            "capRateProxy": round(cap_rate, 4) if cap_rate is not None else None,
         })
 
     kpis["computedMetrics"] = computed

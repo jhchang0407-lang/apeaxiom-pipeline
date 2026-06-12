@@ -26,7 +26,6 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-import boto3
 import httpx
 
 _here = os.path.dirname(os.path.abspath(__file__))
@@ -39,10 +38,7 @@ try:
 except ImportError:
     pass
 
-from config.settings import (
-    FMP_API_KEY, FMP_BASE_URL,
-    CF_R2_ENDPOINT, CF_R2_ACCESS_KEY, CF_R2_SECRET_KEY, CF_R2_BUCKET,
-)
+from config.settings import FMP_API_KEY, FMP_BASE_URL, CF_R2_BUCKET
 
 # ── Config ───────────────────────────────────────────────────────
 BATCH_SIZE = 10           # tickers processed concurrently per batch
@@ -62,20 +58,12 @@ def _sem() -> asyncio.Semaphore:
 
 
 # ── R2 Upload ────────────────────────────────────────────────────
-def _r2_client():
-    return boto3.client(
-        "s3",
-        endpoint_url=CF_R2_ENDPOINT,
-        aws_access_key_id=CF_R2_ACCESS_KEY,
-        aws_secret_access_key=CF_R2_SECRET_KEY,
-    )
+from config.r2 import get_r2_client, update_r2_index
+
 
 def _r2_key(prefix: str, filename: str) -> str:
     now = datetime.now(timezone.utc)
-    mm  = now.strftime("%m")
-    mmm = now.strftime("%b")
-    dd  = now.strftime("%d")
-    yy  = now.strftime("%y")
+    mm = now.strftime("%m")
     yyyy = now.strftime("%Y")
     return f"{prefix}/{yyyy}/{mm}/{filename}"
 
@@ -84,7 +72,7 @@ def upload_to_r2(data: Any, prefix: str, filename: str, dry_run: bool = False) -
     if dry_run:
         print(f"  [DRY RUN] Would upload → {key} ({len(json.dumps(data))/1024:.1f} KB)")
         return key
-    s3 = _r2_client()
+    s3 = get_r2_client()
     s3.put_object(
         Bucket=CF_R2_BUCKET,
         Key=key,
@@ -93,35 +81,6 @@ def upload_to_r2(data: Any, prefix: str, filename: str, dry_run: bool = False) -
     )
     print(f"  ✅ Uploaded → {key}")
     return key
-
-
-def _update_r2_index(r2_key: str) -> None:
-    """Update _index.json in R2 so the frontend finds the latest file instantly."""
-    s3 = _r2_client()
-    try:
-        resp = s3.get_object(Bucket=CF_R2_BUCKET, Key="_index.json")
-        index = json.loads(resp["Body"].read())
-    except Exception:
-        index = {}
-
-    parts = r2_key.split("/")
-    data_type = parts[0]  # "Dashboard" or "Daily Price"
-    ticker = "_"  # these are global, not per-ticker
-
-    if data_type not in index:
-        index[data_type] = {}
-
-    # Always update — this cron runs once daily, so latest upload is always newest.
-    # (Lexicographic comparison broke when day-padding changed, e.g. "Apr 2" > "Apr 03".)
-    index[data_type][ticker] = r2_key
-
-    s3.put_object(
-        Bucket=CF_R2_BUCKET,
-        Key="_index.json",
-        Body=json.dumps(index, indent=2).encode(),
-        ContentType="application/json",
-    )
-    print(f"  ✅ Updated _index.json ({data_type})")
 
 
 # ── FMP Fetchers ─────────────────────────────────────────────────
@@ -504,7 +463,7 @@ def build_price_json(
 
 # ── R2 Filename Builder ──────────────────────────────────────────
 def _build_filename(prefix: str) -> tuple[str, str]:
-    """Return (r2_prefix, filename) matching n8n naming convention."""
+    """Return (r2_prefix, filename) for the dated R2 object key."""
     now = datetime.now(timezone.utc)
     mm  = now.strftime("%m")
     mmm = now.strftime("%b")
@@ -567,7 +526,7 @@ async def main():
         r2_prefix, filename = _build_filename("dashboard")
         key = upload_to_r2(dashboard, r2_prefix, filename, dry_run=args.dry_run)
         if not args.dry_run:
-            _update_r2_index(key)
+            update_r2_index(key)
 
     if run_prices:
         print("\nBuilding daily price JSON...")
@@ -575,7 +534,7 @@ async def main():
         r2_prefix, filename = _build_filename("prices")
         key = upload_to_r2(prices, r2_prefix, filename, dry_run=args.dry_run)
         if not args.dry_run:
-            _update_r2_index(key)
+            update_r2_index(key)
 
     print(f"\nDone in {time.time()-t0:.0f}s total")
 

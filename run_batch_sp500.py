@@ -45,6 +45,12 @@ def save_progress(progress: dict):
         json.dump(progress, f, indent=2)
 
 
+def _mark(progress: dict, key: str, ticker: str):
+    """Record a ticker under a progress key without duplicating across resumed runs."""
+    if ticker not in progress[key]:
+        progress[key].append(ticker)
+
+
 async def run_memo_single(ticker: str, progress: dict, sem: asyncio.Semaphore):
     """Run memo pipeline for one ticker with semaphore-based concurrency."""
     async with sem:
@@ -52,13 +58,13 @@ async def run_memo_single(ticker: str, progress: dict, sem: asyncio.Semaphore):
             from run_memo import generate_memo
             result = await generate_memo(ticker, upload=True)
             if result and result.get("status") == "ok":
-                progress["memo_done"].append(ticker)
+                _mark(progress, "memo_done", ticker)
                 print(f"  ✓ MEMO {ticker} done ({result.get('pipeline_duration_s', 0):.0f}s)")
             else:
-                progress["memo_failed"].append(ticker)
+                _mark(progress, "memo_failed", ticker)
                 print(f"  ✗ MEMO {ticker} failed")
         except Exception as e:
-            progress["memo_failed"].append(ticker)
+            _mark(progress, "memo_failed", ticker)
             print(f"  ✗ MEMO {ticker} error: {e}")
         save_progress(progress)
 
@@ -70,13 +76,13 @@ async def run_quarterly_single(ticker: str, progress: dict, sem: asyncio.Semapho
             from run_quarterly import run_single
             result = await run_single(ticker, quarter_hint=None, upload=True)
             if result:
-                progress["quarterly_done"].append(ticker)
+                _mark(progress, "quarterly_done", ticker)
                 print(f"  ✓ QTRLY {ticker} done")
             else:
-                progress["quarterly_failed"].append(ticker)
+                _mark(progress, "quarterly_failed", ticker)
                 print(f"  ✗ QTRLY {ticker} failed (no output)")
         except Exception as e:
-            progress["quarterly_failed"].append(ticker)
+            _mark(progress, "quarterly_failed", ticker)
             print(f"  ✗ QTRLY {ticker} error: {e}")
         save_progress(progress)
 
@@ -104,14 +110,11 @@ async def main():
     run_quarterly = not args.memo_only
 
     # Filter out already-completed tickers if resuming
+    memo_tickers = tickers
+    quarterly_tickers = tickers
     if args.resume:
-        if run_memo:
-            memo_tickers = [t for t in tickers if t not in progress["memo_done"]]
-        if run_quarterly:
-            quarterly_tickers = [t for t in tickers if t not in progress["quarterly_done"]]
-    else:
-        memo_tickers = tickers
-        quarterly_tickers = tickers
+        memo_tickers = [t for t in tickers if t not in progress["memo_done"]]
+        quarterly_tickers = [t for t in tickers if t not in progress["quarterly_done"]]
 
     # Apply start/limit
     if args.start > 0:

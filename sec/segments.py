@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import re
 import time
+from datetime import date as _date
 
 import httpx
 
-from sec.client import get_submissions, HEADERS
+from sec.client import get_submissions, require_sec_user_agent
 
 
 def _get_latest_filing_url(ticker: str, form_type: str = "10-K") -> str | None:
@@ -43,8 +44,14 @@ def _parse_xbrl_instance(url: str) -> tuple[dict, list]:
         facts: list of (concept, context_id, value) tuples
     """
     time.sleep(0.15)  # rate limit
-    r = httpx.get(url, headers=HEADERS, timeout=60, follow_redirects=True)
-    r.raise_for_status()
+    headers = {"User-Agent": require_sec_user_agent()}
+    try:
+        r = httpx.get(url, headers=headers, timeout=60, follow_redirects=True)
+        r.raise_for_status()
+    except httpx.HTTPError:
+        time.sleep(1.0)
+        r = httpx.get(url, headers=headers, timeout=60, follow_redirects=True)
+        r.raise_for_status()
     text = r.text
 
     # Parse contexts
@@ -151,6 +158,38 @@ def get_segments(ticker: str) -> dict:
     geo_data: dict[str, dict[str, float]] = {}
     biz_segment_data: dict[str, dict[str, float]] = {}  # business segments
 
+    # Track context durations so ~annual values (>300 days) are preferred
+    # over quarterly/YTD contexts ending in the same year.
+    product_durations: dict[tuple[str, str], int | None] = {}
+    geo_durations: dict[tuple[str, str], int | None] = {}
+
+    def _ctx_duration_days(ctx: dict) -> int | None:
+        start = ctx.get("start")
+        end = ctx.get("end")
+        if not start or not end:
+            return None
+        try:
+            return (_date.fromisoformat(end) - _date.fromisoformat(start)).days
+        except ValueError:
+            return None
+
+    def _set_segment_value(
+        data: dict[str, dict[str, float]],
+        seg_durations: dict[tuple[str, str], int | None],
+        year: str,
+        segment_name: str,
+        value: float,
+        duration: int | None,
+    ) -> None:
+        if year not in data:
+            data[year] = {}
+        existing = seg_durations.get((year, segment_name))
+        if segment_name in data[year] and existing is not None and existing > 300:
+            if duration is None or duration <= 300:
+                return  # keep the annual value already stored
+        data[year][segment_name] = value
+        seg_durations[(year, segment_name)] = duration
+
     for concept, ctx_id, value in facts:
         ctx = contexts.get(ctx_id, {})
         dims = ctx.get("dimensions", {})
@@ -159,6 +198,7 @@ def get_segments(ticker: str) -> dict:
         if not year:
             continue
 
+        duration = _ctx_duration_days(ctx)
         is_standard_rev = concept in revenue_concepts
 
         # Product segments — skip aggregate categories (Product/Service)
@@ -170,16 +210,16 @@ def get_segments(ticker: str) -> dict:
                 pass
             else:
                 segment_name = _clean_segment_name(raw_member)
-                if year not in product_data:
-                    product_data[year] = {}
-                product_data[year][segment_name] = value
+                _set_segment_value(
+                    product_data, product_durations, year, segment_name, value, duration
+                )
 
         # Geographic segments (from StatementGeographicalAxis)
         if is_standard_rev and geo_axis in dims and biz_axis not in dims:
             segment_name = _clean_segment_name(dims[geo_axis])
-            if year not in geo_data:
-                geo_data[year] = {}
-            geo_data[year][segment_name] = value
+            _set_segment_value(
+                geo_data, geo_durations, year, segment_name, value, duration
+            )
 
         # Business segments (StatementBusinessSegmentsAxis) — collect as
         # a first-class segment source, not just a fallback.

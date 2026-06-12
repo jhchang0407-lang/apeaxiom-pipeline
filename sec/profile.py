@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sec.client import get_submissions, ticker_to_cik
+from sec.client import get_submissions
 
 
 # SIC code ranges to sector names
@@ -42,7 +42,6 @@ SIC_SUBSECTORS = {
     (3571, 3579): "tech",      # electronic computers & peripherals (AAPL, DELL, HPQ)
     (3661, 3679): "tech",      # communications equipment, semiconductors
     (3674, 3674): "tech",      # semiconductors (NVDA, AMD, INTC, QCOM)
-    (3812, 3812): "tech",      # defense electronics
     (5045, 5045): "tech",      # computers & peripherals wholesale
     (5065, 5065): "tech",      # electronic parts wholesale
     (5112, 5112): "tech",      # stationery/office supplies (sometimes tech distributors)
@@ -78,7 +77,6 @@ SIC_SUBSECTORS = {
     (2830, 2836): "healthcare",  # pharmaceutical preparations
     (2860, 2869): "healthcare",  # industrial chemicals (some pharma-adjacent)
     (3841, 3851): "healthcare",  # surgical/medical instruments, ophthalmic
-    (5912, 5912): "healthcare",  # drug stores (also retail)
     (8000, 8099): "healthcare",  # health services
     (8731, 8734): "healthcare",  # commercial R&D / testing labs (biotech)
 
@@ -86,7 +84,7 @@ SIC_SUBSECTORS = {
     (3711, 3799): "industrials",  # motor vehicles, aircraft, ships, transportation equip
     (3721, 3728): "industrials",  # aircraft & parts
     (3761, 3769): "industrials",  # guided missiles, space vehicles
-    (3812, 3812): "industrials",  # defense electronics (also tech)
+    (3812, 3812): "industrials",  # search/detection/navigation systems (defense electronics)
     (3559, 3569): "industrials",  # special industry machinery
     (3440, 3499): "industrials",  # fabricated metals
     (3510, 3549): "industrials",  # industrial machinery
@@ -110,9 +108,17 @@ SIC_SUBSECTORS = {
 }
 
 
+def _parse_sic(sic_code: int | str) -> int:
+    """Parse a SIC code defensively — API data can be non-numeric."""
+    try:
+        return int(sic_code) if sic_code else 0
+    except (ValueError, TypeError):
+        return 0
+
+
 def _sic_to_sector(sic_code: int | str) -> str:
     """Map SIC code to broad sector name."""
-    sic = int(sic_code) if sic_code else 0
+    sic = _parse_sic(sic_code)
     for (low, high), sector in SIC_SECTORS.items():
         if low <= sic <= high:
             return sector
@@ -121,7 +127,7 @@ def _sic_to_sector(sic_code: int | str) -> str:
 
 def _sic_to_subsector(sic_code: int | str) -> str | None:
     """Map SIC code to specific subsector for sector-specific KPIs."""
-    sic = int(sic_code) if sic_code else 0
+    sic = _parse_sic(sic_code)
     for (low, high), subsector in SIC_SUBSECTORS.items():
         if low <= sic <= high:
             return subsector
@@ -157,13 +163,16 @@ def get_profile(ticker: str) -> dict:
 
     # Get recent filing info
     recent = subs.get("filings", {}).get("recent", {})
+    filing_dates = recent.get("filingDate", [])
     latest_10k_date = ""
     latest_10q_date = ""
     for i, form in enumerate(recent.get("form", [])):
+        if i >= len(filing_dates):
+            break
         if form == "10-K" and not latest_10k_date:
-            latest_10k_date = recent["filingDate"][i]
+            latest_10k_date = filing_dates[i]
         if form == "10-Q" and not latest_10q_date:
-            latest_10q_date = recent["filingDate"][i]
+            latest_10q_date = filing_dates[i]
         if latest_10k_date and latest_10q_date:
             break
 

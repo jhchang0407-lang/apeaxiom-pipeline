@@ -71,6 +71,10 @@ def run_bank_equity(anchors: BankEquityAnchors) -> BankEquityResult:
         result.error = "Cost of equity must exceed sustainable growth rate"
         return result
 
+    if roe < g:
+        result.error = "ROE below sustainable growth rate — justified P/B is negative"
+        return result
+
     # Justified P/B ratio
     justified_pb = (roe - g) / (coe - g)
     result.justified_pb = round(justified_pb, 2)

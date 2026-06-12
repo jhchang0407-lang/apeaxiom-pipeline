@@ -158,7 +158,6 @@ ACCOUNTS_PAYABLE = [
 SHORT_TERM_DEBT = [
     "ShortTermBorrowings",
     "CommercialPaper",
-    "ShortTermDebtWeightedAverageInterestRateOverTime",
 ]
 
 CURRENT_LONG_TERM_DEBT = [
@@ -248,7 +247,6 @@ STOCK_BASED_COMPENSATION = [
     "ShareBasedCompensation",
     "AllocatedShareBasedCompensationExpense",
     "ShareBasedCompensationExpenseAfterTax",
-    "EmployeeServiceShareBasedCompensationNonvestedAwardsTotalCompensationCostNotYetRecognized",
 ]
 
 CHANGE_IN_WORKING_CAPITAL = [

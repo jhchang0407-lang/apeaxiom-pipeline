@@ -115,10 +115,6 @@ def compute_materials_kpis(gaap: dict, years: int = 5) -> dict:
         "IntangibleAssetsNetExcludingGoodwill",
     ], years)
 
-    shares = extract_annual_values(gaap, [
-        "WeightedAverageNumberOfDilutedSharesOutstanding",
-    ], years)
-
     dividends_per_share = extract_annual_values(gaap, [
         "CommonStockDividendsPerShareDeclared",
         "CommonStockDividendsPerShareCashPaid",
@@ -156,7 +152,6 @@ def compute_materials_kpis(gaap: dict, years: int = 5) -> dict:
     debt_by_date = {e["date"]: e["val"] for e in total_debt}
     gw_by_date = {e["date"]: e["val"] for e in goodwill}
     intang_by_date = {e["date"]: e["val"] for e in intangibles}
-    shares_by_date = {e["date"]: e["val"] for e in shares}
     dps_by_date = {e["date"]: e["val"] for e in dividends_per_share}
 
     rev_dates = sorted(rev_by_date.keys(), reverse=True)
@@ -182,7 +177,6 @@ def compute_materials_kpis(gaap: dict, years: int = 5) -> dict:
         debt = debt_by_date.get(date)
         gw = gw_by_date.get(date)
         intang = intang_by_date.get(date)
-        shr = shares_by_date.get(date)
         dps = dps_by_date.get(date)
 
         prior_date = rev_dates[i + 1] if i + 1 < len(rev_dates) else None

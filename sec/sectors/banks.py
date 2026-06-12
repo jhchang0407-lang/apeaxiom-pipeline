@@ -104,11 +104,6 @@ def compute_bank_kpis(gaap: dict, years: int = 5) -> dict:
         "ChargeOffsNet",
     ], years)
 
-    past_due_90 = extract_annual_values(gaap, [
-        "FinancingReceivableRecordedInvestmentPastDue",
-        "FinancingReceivablePastDue90DaysStillAccruing",
-    ], years)
-
     # ── Loan Portfolio ──────────────────────────────────────────────────
     total_loans = extract_annual_values(gaap, [
         "FinancingReceivableExcludingAccruedInterestAfterAllowanceForCreditLoss",
@@ -137,11 +132,6 @@ def compute_bank_kpis(gaap: dict, years: int = 5) -> dict:
         "Deposits",
     ], years)
 
-    interest_bearing_deposits = extract_annual_values(gaap, [
-        "InterestBearingDepositsInDomesticBanks",
-        "InterestBearingDomesticDeposit",
-    ], years)
-
     non_interest_deposits = extract_annual_values(gaap, [
         "NoninterestBearingDepositLiabilities",
     ], years)
@@ -154,10 +144,6 @@ def compute_bank_kpis(gaap: dict, years: int = 5) -> dict:
     equity = extract_annual_values(gaap, [
         "StockholdersEquity",
         "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
-    ], years)
-
-    tangible_equity = extract_annual_values(gaap, [
-        "StockholdersEquity",  # fallback — tangible book not always tagged separately
     ], years)
 
     goodwill = extract_annual_values(gaap, [
@@ -368,27 +354,27 @@ def compute_bank_kpis(gaap: dict, years: int = 5) -> dict:
         computed.append({
             "date": date,
             # Core banking ratios
-            "efficiencyRatio": round(efficiency, 4) if efficiency else None,
-            "netInterestMargin": round(nim, 4) if nim else None,
-            "loanToDepositRatio": round(ldr, 4) if ldr else None,
-            "nplRatio": round(npl_ratio, 4) if npl_ratio else None,
-            "netChargeOffRate": round(nco_rate, 4) if nco_rate else None,
+            "efficiencyRatio": round(efficiency, 4) if efficiency is not None else None,
+            "netInterestMargin": round(nim, 4) if nim is not None else None,
+            "loanToDepositRatio": round(ldr, 4) if ldr is not None else None,
+            "nplRatio": round(npl_ratio, 4) if npl_ratio is not None else None,
+            "netChargeOffRate": round(nco_rate, 4) if nco_rate is not None else None,
             # Credit quality
-            "reserveCoverage": round(reserve_coverage, 4) if reserve_coverage else None,
-            "allowanceToLoans": round(allow_to_loans, 4) if allow_to_loans else None,
-            "provisionToLoans": round(prov_to_loans, 4) if prov_to_loans else None,
+            "reserveCoverage": round(reserve_coverage, 4) if reserve_coverage is not None else None,
+            "allowanceToLoans": round(allow_to_loans, 4) if allow_to_loans is not None else None,
+            "provisionToLoans": round(prov_to_loans, 4) if prov_to_loans is not None else None,
             # Returns
-            "roa": round(roa, 4) if roa else None,
-            "roe": round(roe, 4) if roe else None,
-            "tangibleBookValuePerShare": round(tbv, 2) if tbv else None,
+            "roa": round(roa, 4) if roa is not None else None,
+            "roe": round(roe, 4) if roe is not None else None,
+            "tangibleBookValuePerShare": round(tbv, 2) if tbv is not None else None,
             # Revenue mix
-            "feeIncomeRatio": round(fee_ratio, 4) if fee_ratio else None,
-            "compensationRatio": round(comp_ratio, 4) if comp_ratio else None,
+            "feeIncomeRatio": round(fee_ratio, 4) if fee_ratio is not None else None,
+            "compensationRatio": round(comp_ratio, 4) if comp_ratio is not None else None,
             # Funding
-            "nonInterestDepositRatio": round(nid_ratio, 4) if nid_ratio else None,
-            "costOfDeposits": round(cost_of_deposits, 4) if cost_of_deposits else None,
-            "yieldOnEarningAssets": round(yield_on_assets, 4) if yield_on_assets else None,
-            "netInterestSpread": round(net_spread, 4) if net_spread else None,
+            "nonInterestDepositRatio": round(nid_ratio, 4) if nid_ratio is not None else None,
+            "costOfDeposits": round(cost_of_deposits, 4) if cost_of_deposits is not None else None,
+            "yieldOnEarningAssets": round(yield_on_assets, 4) if yield_on_assets is not None else None,
+            "netInterestSpread": round(net_spread, 4) if net_spread is not None else None,
         })
 
     kpis["computedRatios"] = computed

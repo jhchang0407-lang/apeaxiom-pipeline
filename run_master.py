@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
 """Master Automation — daily trigger for quarterly and full memo pipelines.
 
-Replaces the n8n "Master Automation" workflow.
-
 Logic:
   1. Quarterly: Check FMP earnings calendar (3 days ago) → match against
      S&P 500 ticker list (sp500_tickers.json) → run quarterly pipeline
      for each match.
 
   2. Full Memo: Check FMP 10-K filings (10 days ago) → match against
-     S&P 500 ticker list → trigger full memo pipeline for each match
-     via Modal webhook or locally.
+     S&P 500 ticker list → run full memo pipeline for each match.
 
 Usage:
     python run_master.py                  # run both checks
@@ -42,14 +39,29 @@ from config.settings import FMP_API_KEY, FMP_BASE_URL
 EARNINGS_LOOKBACK_DAYS = 3   # check earnings from 3 days ago
 TENK_LOOKBACK_DAYS = 10      # check 10-K filings from 10 days ago
 
-# S&P 500 ticker list (local JSON — no Google Sheets dependency)
+# S&P 500 ticker list (local JSON)
 SP500_TICKERS_PATH = os.path.join(os.path.dirname(__file__), "sp500_tickers.json")
-
-# Modal webhook for full memos (from modal_app.py)
-MODAL_MEMO_WEBHOOK = os.getenv("MODAL_MEMO_WEBHOOK", "")
 
 
 # ── FMP API ─────────────────────────────────────────────────────
+
+def _fmp_get(url: str, params: dict, retries: int = 2) -> list | None:
+    """GET an FMP endpoint with simple retry. Returns None if all attempts fail
+    so a transient FMP outage degrades to 'no matches' instead of crashing
+    the daily automation."""
+    for attempt in range(retries + 1):
+        try:
+            resp = httpx.get(url, params=params, timeout=30)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            if attempt < retries:
+                print(f"   ⚠️ FMP request failed ({e}); retrying in 5s...")
+                time.sleep(5)
+            else:
+                print(f"   ❌ FMP request failed after {retries + 1} attempts: {e}")
+    return None
+
 
 def fetch_earnings_tickers(lookback_days: int) -> set[str]:
     """Get tickers that reported earnings in the last N days from FMP.
@@ -65,9 +77,9 @@ def fetch_earnings_tickers(lookback_days: int) -> set[str]:
         "to": to_date,
         "apikey": FMP_API_KEY,
     }
-    resp = httpx.get(url, params=params, timeout=30)
-    resp.raise_for_status()
-    data = resp.json()
+    data = _fmp_get(url, params)
+    if data is None:
+        return set()
     print(f"   FMP earnings calendar: {len(data)} companies reported ({from_date} → {to_date})")
     return {item["symbol"].upper() for item in data if "symbol" in item}
 
@@ -88,9 +100,9 @@ def fetch_tenk_filers(lookback_days: int) -> set[str]:
         "limit": 500,
         "apikey": FMP_API_KEY,
     }
-    resp = httpx.get(url, params=params, timeout=30)
-    resp.raise_for_status()
-    data = resp.json()
+    data = _fmp_get(url, params)
+    if data is None:
+        return set()
     print(f"   FMP 10-K filers: {len(data)} companies filed ({from_date} → {to_date})")
     return {item["symbol"].upper() for item in data if "symbol" in item}
 
@@ -160,39 +172,23 @@ def run_quarterly(ticker: str, dry_run: bool = False):
 
 
 def run_full_memo(ticker: str, dry_run: bool = False):
-    """Trigger full memo pipeline for a ticker.
-
-    Tries Modal webhook first (if configured), otherwise runs locally
-    via run_memo.py with --upload flag.
-    """
+    """Run full memo pipeline for a ticker via run_memo.py with --upload."""
     if dry_run:
         print(f"   DRY RUN: run_memo.py {ticker} --upload")
         return
 
-    if not MODAL_MEMO_WEBHOOK:
-        # Run locally via run_memo.py CLI (includes R2 upload)
-        cmd = [PYTHON, "run_memo.py", ticker, "--upload"]
-        print(f"   Running: {' '.join(cmd)}")
-        result = subprocess.run(cmd, cwd=os.path.dirname(__file__), capture_output=True, text=True)
-        if result.returncode == 0:
-            print(f"   ✅ Full memo complete for {ticker}")
-            # Show last few lines of output for context
-            lines = result.stdout.strip().split("\n")
-            for line in lines[-5:]:
-                print(f"      {line}")
-        else:
-            print(f"   ❌ Full memo failed for {ticker}")
-            print(f"      stderr: {result.stderr[-500:]}" if result.stderr else "")
-        return
-
-    # POST to Modal webhook
-    print(f"   Triggering memo for {ticker} via webhook...")
-    resp = httpx.post(MODAL_MEMO_WEBHOOK, json={"ticker": ticker}, timeout=600)
-    if resp.status_code == 200:
-        data = resp.json()
-        print(f"   ✅ Full memo complete for {ticker} — {data.get('r2_key', '')}")
+    cmd = [PYTHON, "run_memo.py", ticker, "--upload"]
+    print(f"   Running: {' '.join(cmd)}")
+    result = subprocess.run(cmd, cwd=os.path.dirname(__file__), capture_output=True, text=True)
+    if result.returncode == 0:
+        print(f"   ✅ Full memo complete for {ticker}")
+        # Show last few lines of output for context
+        lines = result.stdout.strip().split("\n")
+        for line in lines[-5:]:
+            print(f"      {line}")
     else:
-        print(f"   ❌ Full memo failed for {ticker} — HTTP {resp.status_code}")
+        print(f"   ❌ Full memo failed for {ticker}")
+        print(f"      stderr: {result.stderr[-500:]}" if result.stderr else "")
 
 
 # ── Main ────────────────────────────────────────────────────────

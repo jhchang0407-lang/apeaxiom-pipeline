@@ -14,7 +14,7 @@ Models:
 from __future__ import annotations
 
 import math
-from typing import Any, Optional
+from typing import Any
 
 from valuation.industry_config import (
     detect_valuation_mode,
@@ -31,6 +31,19 @@ from valuation.peer_multiples import (
     PeerMultipleResult,
     run_peer_multiples,
 )
+
+__all__ = [
+    "run_valuation",
+    "detect_valuation_mode",
+    "ValuationConfig",
+    "SKIP_DCF_INDUSTRIES",
+    "INDUSTRY_VALUATION_CONFIG",
+    "DCFResult",
+    "BankEquityResult",
+    "DDMResult",
+    "NAVResult",
+    "PeerMultipleResult",
+]
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -207,7 +220,7 @@ def _get_shares(fs: dict, ly: str) -> float:
     1. shares_diluted_millions from share data section
     2. Compute from market_cap / price
     3. Compute from net_income / eps
-    4. Default 1.0 (will produce obviously wrong values)
+    4. 0.0 — models treat non-positive shares as an error
     """
     share = _resolve_section(fs, "s5_share_data")
     shares = _safe_num(_get_ly(share, "shares_diluted_millions", ly))
@@ -228,7 +241,46 @@ def _get_shares(fs: dict, ly: str) -> float:
     if net_income > 0 and eps > 0:
         return net_income / eps  # Already in millions (net_income_usd_m / eps)
 
-    return 1.0  # Fallback
+    return 0.0  # No reliable share count — let models error out cleanly
+
+
+def _latest_kpi_value(sector_kpis: dict, key: str) -> float | None:
+    """Latest non-None value of *key* from the sector KPI computed rows.
+
+    fs["_sec_sector_kpis"] has shape {"sector", "sic", "sicDescription",
+    "kpis": {...}} where kpis holds per-date rows under "computedRatios"
+    (banks/insurance) or "computedMetrics" (other sectors).
+    """
+    kpis = sector_kpis.get("kpis") or {}
+    rows = kpis.get("computedRatios") or kpis.get("computedMetrics") or []
+    if not isinstance(rows, list):
+        return None
+    for row in sorted(
+        (r for r in rows if isinstance(r, dict)),
+        key=lambda r: r.get("date", ""),
+        reverse=True,
+    ):
+        val = row.get(key)
+        if isinstance(val, (int, float)):
+            return float(val)
+    return None
+
+
+def _latest_series_value(sector_kpis: dict, key: str) -> float | None:
+    """Latest 'val' from a raw KPI series like kpis["cet1Ratio"] = [{date, fy, val}]."""
+    kpis = sector_kpis.get("kpis") or {}
+    series = kpis.get(key)
+    if not isinstance(series, list):
+        return None
+    for entry in sorted(
+        (e for e in series if isinstance(e, dict)),
+        key=lambda e: e.get("date", ""),
+        reverse=True,
+    ):
+        val = entry.get("val")
+        if isinstance(val, (int, float)):
+            return float(val)
+    return None
 
 
 def _extract_dcf_anchors(fs: dict, overrides: dict) -> DCFAnchors:
@@ -238,7 +290,6 @@ def _extract_dcf_anchors(fs: dict, overrides: dict) -> DCFAnchors:
     cap = _resolve_section(fs, "s2_capital_structure")
     share = _resolve_section(fs, "s5_share_data")
     bal = _resolve_section(fs, "s11_balance_sheet")
-    margins = _resolve_section(fs, "s5_subject_margins")
     returns = _resolve_section(fs, "s11_returns")
 
     rev_series = inc.get("revenue_usd_m") or {}
@@ -247,11 +298,12 @@ def _extract_dcf_anchors(fs: dict, overrides: dict) -> DCFAnchors:
     # Revenue (in millions — units are consistent throughout)
     revenue = _safe_num(_get_ly(inc, "revenue_usd_m", ly, 0))
 
-    # FCF margin — average of last 3 years for stability
+    # FCF margin — average of last 3 years for stability.
+    # No fabricated default: missing margin makes the DCF error out.
     fcf_margin_series = cf.get("fcf_margin_pct") or {}
     fcf_margin_avg = _avg_recent(fcf_margin_series, 3)
-    fcf_margin_val = fcf_margin_avg or _safe_num(_get_ly(cf, "fcf_margin_pct", ly, 20))
-    fcf_margin = fcf_margin_val / 100.0 if fcf_margin_val else 0.20
+    fcf_margin_val = fcf_margin_avg or _safe_num(_get_ly(cf, "fcf_margin_pct", ly))
+    fcf_margin = fcf_margin_val / 100.0 if fcf_margin_val else None
 
     # Revenue growth — blend of recent performance and trend
     # Use the higher of: 3Y CAGR vs weighted recent growth (60% latest + 40% prior)
@@ -281,11 +333,11 @@ def _extract_dcf_anchors(fs: dict, overrides: dict) -> DCFAnchors:
     # Pick the best growth estimate:
     # 1. Forward estimates (analyst consensus) if available
     # 2. Higher of (weighted recent, 3Y CAGR) to avoid downward bias from one bad year
-    # 3. Clamp to 1-25% range to avoid extreme projections
+    # 3. Clamp to -15%..25% range to avoid extreme projections
     candidates = [g for g in [fwd_growth, weighted_growth, cagr_3y] if g is not None]
     if candidates:
         rev_growth = max(candidates)
-        rev_growth = max(0.01, min(rev_growth, 0.25))  # Clamp 1-25%
+        rev_growth = max(-0.15, min(rev_growth, 0.25))  # Clamp -15% to 25%
     else:
         rev_growth = 0.05  # Default 5%
 
@@ -351,7 +403,6 @@ def _extract_bank_anchors(fs: dict, overrides: dict) -> BankEquityAnchors:
     inc = _resolve_section(fs, "s11_income_statement")
     bal = _resolve_section(fs, "s11_balance_sheet")
     returns = _resolve_section(fs, "s11_returns")
-    share = _resolve_section(fs, "s5_share_data")
     sector_kpis = fs.get("_sec_sector_kpis") or {}
 
     rev_series = inc.get("revenue_usd_m") or {}
@@ -412,11 +463,12 @@ def _extract_bank_anchors(fs: dict, overrides: dict) -> BankEquityAnchors:
     else:
         g = 0.03
 
-    # Sector KPIs
-    cet1 = _safe_num(sector_kpis.get("cet1_ratio")) or None
-    nim = _safe_num(sector_kpis.get("net_interest_margin")) or None
-    eff_ratio = _safe_num(sector_kpis.get("efficiency_ratio")) or None
-    npl = _safe_num(sector_kpis.get("npl_ratio")) or None
+    # Sector KPIs — pulled from the latest period of the bank extractor output
+    # (kpis["cet1Ratio"] raw series; computedRatios rows for the ratios)
+    cet1 = _latest_series_value(sector_kpis, "cet1Ratio")
+    nim = _latest_kpi_value(sector_kpis, "netInterestMargin")
+    eff_ratio = _latest_kpi_value(sector_kpis, "efficiencyRatio")
+    npl = _latest_kpi_value(sector_kpis, "nplRatio")
 
     return BankEquityAnchors(
         book_value_per_share=overrides.get("book_value_per_share", bvps),
@@ -436,9 +488,9 @@ def _extract_bank_anchors(fs: dict, overrides: dict) -> BankEquityAnchors:
 def _extract_nav_anchors(fs: dict, industry: str, overrides: dict) -> NAVAnchors:
     """Build NAVAnchors from fact sheet data."""
     inc = _resolve_section(fs, "s11_income_statement")
+    cf = _resolve_section(fs, "s11_cash_flow")
     cap = _resolve_section(fs, "s2_capital_structure")
     bal = _resolve_section(fs, "s11_balance_sheet")
-    share = _resolve_section(fs, "s5_share_data")
     sector_kpis = fs.get("_sec_sector_kpis") or {}
     peers = fs.get("s6_peers") or {}
     peer_medians = peers.get("peer_medians") or {}
@@ -451,8 +503,6 @@ def _extract_nav_anchors(fs: dict, industry: str, overrides: dict) -> NAVAnchors
     )
     if not ly:
         ly = _latest_year(inc.get("revenue_usd_m") or {})
-
-    cf = _resolve_section(fs, "s11_cash_flow")
 
     net_debt = _safe_num(
         _get_ly(cap, "net_debt_usd_m", ly)
@@ -481,24 +531,27 @@ def _extract_nav_anchors(fs: dict, industry: str, overrides: dict) -> NAVAnchors
         defaults = INDUSTRY_DEFAULT_MULTIPLES.get(bucket, INDUSTRY_DEFAULT_MULTIPLES["default"])
         peer_ev_ebitda = defaults.get("ev_ebitda", 0)
 
-    # Sector-specific data from KPIs
-    standardized_measure = _safe_num(sector_kpis.get("standardized_measure"))
-    proved_reserves = _safe_num(sector_kpis.get("proved_reserves_boe"))
-    production = _safe_num(sector_kpis.get("production_boe_per_day"))
-    noi = _safe_num(sector_kpis.get("noi"))
-    cap_rate = _safe_num(sector_kpis.get("cap_rate"))
-    occupancy = _safe_num(sector_kpis.get("occupancy_rate"))
+    # Sector-specific data from the SEC sector extractor outputs.
+    # Energy: kpis["provedReserves"] raw series (volume units).
+    # REITs: computedMetrics rows carry "noi" (raw $) and "capRateProxy".
+    # No extractor produces a standardized measure, daily production, or
+    # occupancy — those anchors stay None.
+    proved_reserves = _latest_series_value(sector_kpis, "provedReserves")
+    noi = _latest_kpi_value(sector_kpis, "noi")
+    if noi is not None:
+        noi = noi / 1e6  # XBRL values are raw dollars; anchors use $M
+    cap_rate = _latest_kpi_value(sector_kpis, "capRateProxy")
 
     return NAVAnchors(
         net_debt=overrides.get("net_debt", net_debt),
         shares_diluted=overrides.get("shares_diluted", shares),
         sector=overrides.get("sector", sector),
-        proved_reserves_boe=standardized_measure and proved_reserves or None,
-        standardized_measure=standardized_measure or None,
-        production_boe_per_day=production or None,
+        proved_reserves_boe=proved_reserves if proved_reserves else None,
+        standardized_measure=None,
+        production_boe_per_day=None,
         noi=noi or None,
         cap_rate=cap_rate / 100.0 if cap_rate and cap_rate > 1 else cap_rate or None,
-        occupancy_rate=occupancy or None,
+        occupancy_rate=None,
         ebitda=overrides.get("ebitda", ebitda),
         peer_ev_ebitda_median=overrides.get("peer_ev_ebitda_median", peer_ev_ebitda or None),
     )
@@ -666,7 +719,6 @@ def _extract_ddm_anchors(fs: dict, overrides: dict) -> DDMAnchors:
     cap_alloc = _resolve_section(fs, "s9_capital_allocation")
     returns = _resolve_section(fs, "s11_returns")
     bal = _resolve_section(fs, "s11_balance_sheet")
-    share = _resolve_section(fs, "s5_share_data")
 
     rev_series = inc.get("revenue_usd_m") or {}
     ly = _latest_year(rev_series) or _best_latest_year(
@@ -876,8 +928,10 @@ def _run_dcf_mode(
             "pb_implied": peer_result.pb_implied,
             "peer_medians": peer_result.peer_medians,
         }
-    except Exception:
-        pass
+    except Exception as e:
+        result["cross_checks"] = {
+            "error": f"peer cross-check failed: {type(e).__name__}: {e}"
+        }
 
     return result
 

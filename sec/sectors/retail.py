@@ -210,9 +210,11 @@ def compute_retail_kpis(gaap: dict, years: int = 5) -> dict:
         roa = safe_div(ni, assets)
         roe = safe_div(ni, eq)
 
-        # ROIC
+        # ROIC = NOPAT / invested capital
         invested_capital = (eq or 0) + (debt or 0)
-        roic = safe_div(op, invested_capital) if invested_capital else None
+        tax_rate = 0.21  # approximate
+        nopat = op * (1 - tax_rate) if op else None
+        roic = safe_div(nopat, invested_capital) if invested_capital else None
 
         # Revenue per share
         rev_per_share = safe_div(rev, shr)
@@ -220,14 +222,15 @@ def compute_retail_kpis(gaap: dict, years: int = 5) -> dict:
         computed.append({
             "date": date,
             # Core retail
-            "inventoryTurnover": round(inv_turnover, 2) if inv_turnover else None,
-            "daysInventory": round(dio, 1) if dio else None,
-            "revenuePerStore": round(rev_per_store) if rev_per_store else None,
+            "inventoryTurnover": round(inv_turnover, 2) if inv_turnover is not None else None,
+            "daysInventory": round(dio, 1) if dio is not None else None,
+            "revenuePerStore": round(rev_per_store) if rev_per_store is not None else None,
+            "revenuePerShare": round(rev_per_share, 2) if rev_per_share is not None else None,
             # Margins
             "grossMargin": round(gross_margin, 4) if gross_margin is not None else None,
             "operatingMargin": round(operating_margin, 4) if operating_margin is not None else None,
             "netMargin": round(net_margin, 4) if net_margin is not None else None,
-            "sgaAsPercentOfRevenue": round(sga_pct, 4) if sga_pct else None,
+            "sgaAsPercentOfRevenue": round(sga_pct, 4) if sga_pct is not None else None,
             "fcfMargin": round(fcf_margin, 4) if fcf_margin is not None else None,
             # Growth
             "revenueGrowth": round(rev_growth, 4) if rev_growth is not None else None,
@@ -236,9 +239,9 @@ def compute_retail_kpis(gaap: dict, years: int = 5) -> dict:
             # Working capital
             "cashConversionCycle": round(ccc, 1) if ccc is not None else None,
             # Returns
-            "roa": round(roa, 4) if roa else None,
-            "roe": round(roe, 4) if roe else None,
-            "roic": round(roic, 4) if roic else None,
+            "roa": round(roa, 4) if roa is not None else None,
+            "roe": round(roe, 4) if roe is not None else None,
+            "roic": round(roic, 4) if roic is not None else None,
         })
 
     kpis["computedMetrics"] = computed

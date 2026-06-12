@@ -4,8 +4,8 @@ Runs fetch → quantitative → format_registry for one representative ticker
 per GICS sector, then dumps trace output for inspection.
 
 Usage:
-    python test_quant_all_sectors.py
-    python test_quant_all_sectors.py --ticker AAPL   # single ticker
+    python tests/test_quant_all_sectors.py
+    python tests/test_quant_all_sectors.py --ticker AAPL   # single ticker
 """
 
 import asyncio

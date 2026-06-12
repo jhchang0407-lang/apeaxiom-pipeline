@@ -2,8 +2,32 @@
 
 from __future__ import annotations
 
+from datetime import date as _date
+
 from sec.client import get_companyfacts
 from sec.mapper import build_tag_map
+
+_UNIT_PREFERENCE = ("USD", "USD/shares", "shares")
+
+
+def _pick_unit_key(units: dict) -> str:
+    """Pick the unit key, preferring USD over filer-specific units."""
+    for unit in _UNIT_PREFERENCE:
+        if unit in units:
+            return unit
+    return next(iter(units))
+
+
+def _duration_days(entry: dict) -> int | None:
+    """Days between an entry's start and end dates, or None if unavailable."""
+    start = entry.get("start")
+    end = entry.get("end")
+    if not start or not end:
+        return None
+    try:
+        return (_date.fromisoformat(end) - _date.fromisoformat(start)).days
+    except ValueError:
+        return None
 
 
 def _extract_periods(
@@ -26,10 +50,9 @@ def _extract_periods(
         return []
 
     units = gaap[tag].get("units", {})
-    # Pick the first available unit (usually USD or shares or pure)
     if not units:
         return []
-    unit_key = list(units.keys())[0]
+    unit_key = _pick_unit_key(units)
     entries = units[unit_key]
 
     # Filter by form type
@@ -44,13 +67,27 @@ def _extract_periods(
     # dividend payment dates filed with fp=FY on 10-K forms).
     filtered = [e for e in filtered if "start" in e]
 
-    # Deduplicate by (end, fp) — keep latest filed
-    seen: dict[tuple, dict] = {}
+    # Deduplicate by (end, fp). The same (end, fp) can carry 3-month, YTD,
+    # and full-year durations — prefer the duration that matches the
+    # extraction window (quarterly ~3 months, annual ~12 months), then keep
+    # the latest filed. Fall back to latest filed when no duration matches.
+    dur_lo, dur_hi = (85, 100) if fp_filter else (340, 380)
+    groups: dict[tuple, list[dict]] = {}
     for e in filtered:
-        key = (e["end"], e.get("fp", ""))
-        existing = seen.get(key)
-        if existing is None or e.get("filed", "") > existing.get("filed", ""):
-            seen[key] = e
+        groups.setdefault((e["end"], e.get("fp", "")), []).append(e)
+
+    seen: dict[tuple, dict] = {}
+    for key, group in groups.items():
+        matching = [
+            e for e in group
+            if (d := _duration_days(e)) is not None and dur_lo <= d <= dur_hi
+        ]
+        candidates = matching or group
+        best = candidates[0]
+        for e in candidates[1:]:
+            if e.get("filed", "") > best.get("filed", ""):
+                best = e
+        seen[key] = best
 
     # Sort by end date descending
     result = sorted(seen.values(), key=lambda x: x["end"], reverse=True)
@@ -78,7 +115,7 @@ def _extract_instant(
     units = gaap[tag].get("units", {})
     if not units:
         return []
-    unit_key = list(units.keys())[0]
+    unit_key = _pick_unit_key(units)
     entries = units[unit_key]
 
     # Filter by form type
@@ -106,7 +143,7 @@ def _is_duration_tag(facts_data: dict, tag: str | None) -> bool:
     units = gaap[tag].get("units", {})
     if not units:
         return True
-    unit_key = list(units.keys())[0]
+    unit_key = _pick_unit_key(units)
     entries = units[unit_key]
     if entries:
         return "start" in entries[0]
@@ -170,7 +207,6 @@ def _build_statement_rows(
 
         for entry in entries:
             end = entry["end"]
-            fy = entry.get("fy")
             fp_val = entry.get("fp", "")
 
             # For quarterly, use (end, fp) as key; for annual use end
@@ -197,9 +233,8 @@ def _add_fmp_aliases(
     balance_sheet: list[dict],
     cash_flow: list[dict],
 ) -> None:
-    """Add FMP-compatible field aliases so downstream n8n code nodes work unchanged.
-
-    Adds alias fields with FMP naming conventions alongside our cleaner names.
+    """Add FMP-compatible field aliases alongside our cleaner names so
+    downstream consumers can use either naming convention.
     """
     for row in income_statement:
         # weightedAverageSharesDiluted → weightedAverageShsOutDil

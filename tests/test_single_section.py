@@ -1,9 +1,9 @@
 """Run a single section of the pipeline to save token costs.
 
 Usage:
-    python test_single_section.py AAPL 10        # Section 10 for AAPL
-    python test_single_section.py JPM 10 11      # Sections 10 and 11 for JPM
-    python test_single_section.py PLD             # Defaults to section 10
+    python tests/test_single_section.py AAPL 10        # Section 10 for AAPL
+    python tests/test_single_section.py JPM 10 11      # Sections 10 and 11 for JPM
+    python tests/test_single_section.py PLD             # Defaults to section 10
 """
 
 import asyncio

@@ -1,7 +1,5 @@
 """Final Assembly — merges aggregate outputs into formatted investment memo.
 
-Ported from Final_Assembly.js v8.3 (n8n node).
-
 Responsibilities:
   1. Merge Aggregate 1 (sections 2-11, 13) + Aggregate 2 (sections 12, 1, 14)
      + Source Registry into a unified section/structured map.
@@ -1201,6 +1199,8 @@ def compute_dcf_scenario(assumptions: dict, anchors: dict) -> DCFScenario:
     term_reinvest = max(term_reinvest, 0.05)
 
     terminal_fcff = terminal_nopat * (1 - term_reinvest)
+    # Guard the Gordon growth division: WACC must exceed terminal growth
+    wacc = max(wacc, term_growth + 0.005)
     tv = terminal_fcff * (1 + term_growth) / (wacc - term_growth)
     pv_tv = tv / ((1 + wacc) ** proj_years)
     ev = total_pv_fcf + pv_tv
@@ -1486,35 +1486,6 @@ def _render_peers(peer_table: Optional[dict]) -> str:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# PROSE RENDERER  (used by aggregator pass-through)
-# ═══════════════════════════════════════════════════════════════════════
-
-
-def render_prose(obj: Any) -> str:
-    """Recursively render structured JSON to prose (Aggregate 1/2 style)."""
-    if obj is None:
-        return ""
-    if isinstance(obj, str):
-        return obj
-    if isinstance(obj, (int, float)):
-        return str(obj)
-    if isinstance(obj, list):
-        return "\n".join(filter(None, (render_prose(item) for item in obj)))
-    if isinstance(obj, dict):
-        parts: list[str] = []
-        for key, value in obj.items():
-            if key == "section_number":
-                continue
-            if value is None:
-                continue
-            rendered = render_prose(value)
-            if rendered:
-                parts.append(rendered)
-        return "\n\n".join(parts)
-    return ""
-
-
-# ═══════════════════════════════════════════════════════════════════════
 # SECTION RENDERER — structured JSON -> markdown
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -1654,6 +1625,21 @@ class _SectionRenderer:
             return
 
         # Special-case rendering for known keys
+        if pk == "analytical_stance" and isinstance(node, dict):
+            lines: list[str] = []
+            for k, lbl in (
+                ("key_debate", "Key Debate"),
+                ("strongest_counterargument", "Strongest Counterargument"),
+                ("what_would_change_this_view", "What Would Change This View"),
+            ):
+                v = node.get(k)
+                if isinstance(v, str) and v.strip():
+                    lines.extend([f"**{lbl}:** {v.strip()}", ""])
+            if lines:
+                out.append("")
+                out.extend(lines)
+            return
+
         if pk == "dcf_table" and isinstance(node, dict):
             out.extend(["", _render_dcf(node, self.dcf_anchors), ""])
             return
@@ -2909,198 +2895,6 @@ def build_data_block(
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# DATA SUMMARY HEADER — rendered at top of memo
-# ═══════════════════════════════════════════════════════════════════════
-
-
-def _render_data_summary(
-    data_block: dict,
-    val_data: dict,
-    inc_stmt: dict,
-    cf_stmt: dict,
-    margins: dict,
-    returns: dict,
-    fs_identity: dict,
-    peer_bench: dict,
-    ly: str,
-) -> str:
-    """Render a compact data summary block for the top of the memo.
-
-    Gives readers all key metrics at a glance before diving into the
-    full analysis.
-    """
-
-    def _v(d: dict, key: str, year: str = "") -> Any:
-        """Get value — optionally from year-keyed sub-dict."""
-        sub = d.get(key)
-        if isinstance(sub, dict) and year:
-            return sub.get(year)
-        return sub
-
-    def _f_pct(v: Any) -> str:
-        n = _safe_num(v)
-        return f"{n:.1f}%" if n is not None else "\u2014"
-
-    def _f_mult(v: Any) -> str:
-        n = _safe_num(v)
-        return f"{n:.1f}x" if n is not None else "\u2014"
-
-    def _f_dollar(v: Any) -> str:
-        n = _safe_num(v)
-        if n is None:
-            return "\u2014"
-        return f"${n:,.2f}"
-
-    def _f_dollar_b(v: Any) -> str:
-        n = _safe_num(v)
-        if n is None:
-            return "\u2014"
-        if abs(n) >= 1000:
-            return f"${n / 1000:.2f}T"
-        return f"${n:.1f}B"
-
-    def _f_rev(v: Any) -> str:
-        """Format revenue in M → show as $X.XB or $X,XXXM."""
-        n = _safe_num(v)
-        if n is None:
-            return "\u2014"
-        if abs(n) >= 1000:
-            return f"${n / 1000:.1f}B"
-        return f"${n:,.0f}M"
-
-    # ── Identity ──
-    ticker = data_block.get("ticker", "")
-    company = data_block.get("company", "")
-    sector = fs_identity.get("sector", "")
-    industry = fs_identity.get("industry", "")
-    exchange = fs_identity.get("exchange", "")
-
-    # ── Scores ──
-    moat_class = data_block.get("moat") or ""
-    moat_score = data_block.get("moat_score")
-    growth_score = data_block.get("growth")
-    quality_score = data_block.get("quality")
-
-    moat_str = f"{moat_class.upper()} ({_safe_num(moat_score):.0f})" if moat_class and _safe_num(moat_score) is not None else (moat_class.upper() if moat_class else (_fmt(moat_score, "dec1") if moat_score else "\u2014"))
-
-    # ── Pricing ──
-    price = _safe_num(
-        val_data.get("_current_price")
-        or fs_identity.get("price")
-    )
-    mkt_cap = _safe_num(
-        val_data.get("_current_market_cap_b")
-        or _v(val_data, "market_cap_usd_b", ly)
-    )
-    fair_value = _safe_num(data_block.get("fair_value"))
-    fv_method = data_block.get("fair_value_method", "")
-    fv_note = data_block.get("fair_value_note", "")
-
-    upside = None
-    if fair_value and price and price > 0:
-        upside = ((fair_value / price) - 1) * 100
-
-    # ── Multiples (prefer _current_* keys, fall back to year-keyed) ──
-    pe = _safe_num(val_data.get("_current_pe") or _v(val_data, "price_to_earnings", ly))
-    ev_ebitda = _safe_num(val_data.get("_current_ev_ebitda") or _v(val_data, "ev_to_ebitda", ly))
-    p_fcf = _safe_num(val_data.get("_current_p_fcf") or _v(val_data, "price_to_fcf", ly))
-    div_yield = _safe_num(val_data.get("_current_dividend_yield_pct") or _v(val_data, "dividend_yield_pct", ly))
-    p_book = _safe_num(_v(val_data, "price_to_book", ly))
-    fcf_yield = _safe_num(val_data.get("_current_fcf_yield_pct") or _v(val_data, "fcf_yield_pct", ly))
-
-    # ── Peer medians ──
-    pm = peer_bench.get("peer_medians") or {}
-    peer_pe = _safe_num(pm.get("price_to_earnings"))
-    peer_ev_ebitda = _safe_num(pm.get("ev_to_ebitda"))
-
-    # ── Financials ──
-    revenue = _safe_num(_v(inc_stmt, "revenue_usd_m", ly))
-    rev_growth = _safe_num(_v(inc_stmt, "revenue_growth_pct", ly))
-    gross_m = _safe_num(_v(margins, "gross_margin_pct", ly))
-    op_m = _safe_num(_v(margins, "operating_margin_pct", ly))
-    net_m = _safe_num(_v(margins, "net_margin_pct", ly))
-    roic = _safe_num(_v(returns, "roic_pct", ly))
-    roe = _safe_num(_v(returns, "roe_pct", ly))
-    fcf_m = _safe_num(_v(cf_stmt, "fcf_margin_pct", ly))
-    eps = _safe_num(_v(inc_stmt, "eps_diluted", ly))
-
-    # ── Build lines ──
-    lines: list[str] = []
-    lines.append(f"# DATA SUMMARY \u2014 {company} ({ticker})")
-    lines.append("")
-
-    # Identity row
-    id_parts = []
-    if sector:
-        id_parts.append(f"**Sector:** {sector}")
-    if industry:
-        id_parts.append(f"**Industry:** {industry}")
-    if exchange:
-        id_parts.append(f"**Exchange:** {exchange}")
-    if ly:
-        id_parts.append(f"**Latest FY:** {ly}")
-    if id_parts:
-        lines.append(" | ".join(id_parts))
-        lines.append("")
-
-    # Scores row
-    score_parts = [f"**Moat:** {moat_str}"]
-    score_parts.append(f"**Growth:** {_fmt(growth_score, 'dec1')}")
-    score_parts.append(f"**Quality:** {_fmt(quality_score, 'dec1')}")
-    lines.append(" | ".join(score_parts))
-    lines.append("")
-
-    # Pricing row
-    price_parts = []
-    if price is not None:
-        price_parts.append(f"**Price:** ${price:,.2f}")
-    if mkt_cap is not None:
-        price_parts.append(f"**Mkt Cap:** {_f_dollar_b(mkt_cap)}")
-    if fair_value is not None:
-        fv_label = f" ({fv_method})" if fv_method else ""
-        price_parts.append(f"**Fair Value:** ${fair_value:,.2f}{fv_label}")
-    if upside is not None:
-        sign = "+" if upside >= 0 else ""
-        price_parts.append(f"**Upside:** {sign}{upside:.1f}%")
-    if price_parts:
-        lines.append(" | ".join(price_parts))
-        lines.append("")
-
-    # Multiples table
-    mult_headers = ["P/E", "EV/EBITDA", "P/FCF", "P/B", "Div Yield", "FCF Yield"]
-    mult_values = [
-        _f_mult(pe), _f_mult(ev_ebitda), _f_mult(p_fcf),
-        _f_mult(p_book), _f_pct(div_yield), _f_pct(fcf_yield),
-    ]
-    # Peer row
-    peer_values = [
-        _f_mult(peer_pe) if peer_pe else "\u2014",
-        _f_mult(peer_ev_ebitda) if peer_ev_ebitda else "\u2014",
-        "\u2014", "\u2014", "\u2014", "\u2014",
-    ]
-
-    lines.append("| " + " | ".join(mult_headers) + " |")
-    lines.append("| " + " | ".join(["---"] * len(mult_headers)) + " |")
-    lines.append("| " + " | ".join(mult_values) + " |")
-    lines.append("| " + " | ".join(f"*Peer: {v}*" if v != "\u2014" else "\u2014" for v in peer_values) + " |")
-    lines.append("")
-
-    # Financials table
-    fin_headers = ["Revenue", "Rev Growth", "Gross Margin", "Op Margin",
-                   "Net Margin", "ROIC", "ROE", "FCF Margin", "EPS"]
-    fin_values = [
-        _f_rev(revenue), _f_pct(rev_growth), _f_pct(gross_m), _f_pct(op_m),
-        _f_pct(net_m), _f_pct(roic), _f_pct(roe), _f_pct(fcf_m), _f_dollar(eps),
-    ]
-    lines.append("| " + " | ".join(fin_headers) + " |")
-    lines.append("| " + " | ".join(["---"] * len(fin_headers)) + " |")
-    lines.append("| " + " | ".join(fin_values) + " |")
-    lines.append("")
-
-    return "\n".join(lines)
-
-
-# ═══════════════════════════════════════════════════════════════════════
 # RENDER SECTION MARKDOWN — public API
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -3706,113 +3500,12 @@ def assemble_memo(  # noqa: C901 — direct port of 1265-line JS node
         else:
             _s12 += f"\n\n{_fv_note}"
 
-        # ── Scrub hallucinated dollar fair values from LLM prose ──────
-        # The LLM may still include dollar amounts in the valuation_synthesis
-        # text. Replace them with the computed values.
-        # Match patterns like "$309/share", "$309 per share", "$309.50",
-        # "fair value of $309", "price target of $XX"
-        _known_values = {_actual_fv}
-        if _bull_fv:
-            _known_values.add(_bull_fv)
-        if _bear_fv:
-            _known_values.add(_bear_fv)
-        if _fv_method_label == "dcf_weighted" and _base_fv_only:
-            _known_values.add(_base_fv_only)
-
-        # Add any values from the precomputed peer table so we don't scrub them
-        # (peer-implied fair values, peer medians, etc.)
-        if precomputed_peer_table:
-            for _ptv in [
-                _safe_get(precomputed_peer_table, "subject", "p_e"),
-                _safe_get(precomputed_peer_table, "subject", "p_b"),
-                _safe_get(precomputed_peer_table, "subject", "p_fcf"),
-            ]:
-                if _ptv and isinstance(_ptv, (int, float)):
-                    _known_values.add(float(_ptv))
-
-        # Extract dollar values from the Scenario Analysis and Peer Valuation
-        # sections so they are treated as "known" and not scrubbed.
-        _scenario_section_match = re.search(
-            r"##\s*Scenario\s+Analysis\s*\n(.*?)(?=\n##|\Z)",
-            _s12, re.IGNORECASE | re.DOTALL,
-        )
-        _peer_section_match = re.search(
-            r"##\s*Peer\s+Valuation\s*\n(.*?)(?=\n##|\Z)",
-            _s12, re.IGNORECASE | re.DOTALL,
-        )
-        _all_scenario_text = ""
-        if _scenario_section_match:
-            _all_scenario_text += _scenario_section_match.group(1)
-        if _peer_section_match:
-            _all_scenario_text += _peer_section_match.group(1)
-        if _all_scenario_text:
-            for _dm in re.finditer(r"\$[\d,]+(?:\.\d{1,2})?", _all_scenario_text):
-                try:
-                    _sv = float(_dm.group(0).replace("$", "").replace(",", ""))
-                    _known_values.add(_sv)
-                except ValueError:
-                    pass
-        # Also add the current price as a known value
-        _cp = fs_identity.get("price")
-        if _cp and isinstance(_cp, (int, float)):
-            _known_values.add(float(_cp))
-
-        # Find the Fair Value Conclusion section and scrub hallucinated $ amounts.
-        # FVC scrub disabled — replacing hallucinated $ amounts with a single
-        # _actual_fv created worse output (Bull/Base/Bear all showing identical
-        # values).  The scenario table contains correctly computed values;
+        # NOTE: A dollar-value scrub used to rewrite hallucinated $ amounts
+        # in the prose with the computed fair value, but it corrupted
+        # legitimate dollar values (Bull/Base/Bear all showing identical
+        # numbers).  The scenario table contains correctly computed values;
         # narrative text is better left with the LLM's own values.
-        _skip_fvc_scrub = True
-        _fvc_match = re.search(
-            r"##\s*Fair\s+Value\s+Conclusion\s*\n(.*)",
-            _s12, re.IGNORECASE | re.DOTALL
-        ) if not _skip_fvc_scrub else None
-        if _fvc_match:
-            _fvc_text = _fvc_match.group(1)
-            # Find all dollar amounts in the FVC text
-            _dollar_pattern = re.compile(
-                r'\$[\d,]+(?:\.\d{1,2})?'
-            )
-
-            def _scrub_dollar(m):
-                val_str = m.group(0).replace("$", "").replace(",", "")
-                try:
-                    val = float(val_str)
-                except ValueError:
-                    return m.group(0)
-                # Keep if it's a known computed value (within 5% tolerance)
-                for kv in _known_values:
-                    if kv and abs(val - kv) / max(kv, 0.01) < 0.05:
-                        return m.group(0)
-                # Hallucinated value — replace with actual computed fair value
-                if _actual_fv:
-                    return f"${_actual_fv:,.2f}"
-                return m.group(0)
-
-            _fvc_scrubbed = _dollar_pattern.sub(_scrub_dollar, _fvc_text)
-            if _fvc_scrubbed != _fvc_text:
-                _s12 = _s12[:_fvc_match.start(1)] + _fvc_scrubbed
-
         formatted_sections["section_12"] = _s12
-
-        # ── Scrub hallucinated dollar fair values from S1 and S14 ─────
-        # Only for DCF mode — peer/bank_equity/DDM values are self-consistent.
-        if not _skip_fvc_scrub:
-            for _skey in ("section_1", "section_14"):
-                if _skey not in formatted_sections:
-                    continue
-                _stxt = formatted_sections[_skey]
-                _val_re = re.search(
-                    r"(?:##\s*(?:Valuation|The\s+Verdict|Fair\s+Value)[^\n]*\n)(.*?)(?=\n##|\Z)",
-                    _stxt, re.IGNORECASE | re.DOTALL,
-                )
-                if _val_re:
-                    _vtxt = _val_re.group(1)
-                    _vtxt_scrubbed = _dollar_pattern.sub(_scrub_dollar, _vtxt)
-                    if _vtxt_scrubbed != _vtxt:
-                        formatted_sections[_skey] = (
-                            _stxt[:_val_re.start(1)] + _vtxt_scrubbed + _stxt[_val_re.end(1):]
-                        )
 
     # ─── Catalyst Calendar (from agent_3 research) ───────────────────
     _catalyst_cal = section_outputs.get("catalyst_calendar", [])
@@ -3894,16 +3587,6 @@ def assemble_memo(  # noqa: C901 — direct port of 1265-line JS node
     if missing:
         warnings.append(f"Missing sections: {', '.join(str(n) for n in missing)}")
 
-    # Debug warnings (matching JS output)
-    warnings.append(f"SCORE_DEBUG final scores={json.dumps(scores, default=str)}")
-    warnings.append(f"SCORE_DEBUG data_block={json.dumps(data_block, default=str)}")
-    warnings.append(f"DCF_DEBUG anchors={json.dumps(dcf_anchors, default=str)}")
-    warnings.append(
-        f'DCF_DEBUG industry_from_fs="{industry_from_fs}" '
-        f'normalized="{normalized_industry}" '
-        f"isFinancialSector={is_financial} isAssetHeavySector={is_asset_heavy}"
-    )
-
     if data_block.get("fair_value") is not None and data_block["fair_value"] < 0 and not skip_dcf:
         warnings.append(
             f"DCF_SANITY: Base-case fair value is negative "
@@ -3974,49 +3657,3 @@ def assemble_memo(  # noqa: C901 — direct port of 1265-line JS node
         tables_rendered=table_sets,
         warnings=warnings,
     )
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# CONVENIENCE: merge_aggregates — replaces JS input routing
-# ═══════════════════════════════════════════════════════════════════════
-
-
-def merge_aggregates(
-    agg1: dict, agg2: dict, sr_data: dict,
-) -> tuple[dict, dict]:
-    """Merge Aggregate 1 + 2 + source-registry into (section_outputs, fact_sheet).
-
-    This replaces the JS routing logic at the top of Final_Assembly.js that
-    splits ``$("For Assembly").all()`` items by inspecting their keys.
-
-    Returns a tuple of ``(section_outputs, fact_sheet)`` suitable as arguments
-    to :func:`assemble_memo`.
-    """
-    company_name = agg1.get("company_name") or agg2.get("company_name", "")
-    ticker = agg1.get("ticker") or agg2.get("ticker", "")
-    raw_section_map = {**(agg1.get("section_map") or {}), **(agg2.get("section_map") or {})}
-    structured_map = {**(agg1.get("structured_map") or {}), **(agg2.get("structured_map") or {})}
-    sources_appendix = (
-        sr_data.get("sources_appendix")
-        or agg1.get("sources_appendix")
-        or agg2.get("sources_appendix")
-        or ""
-    )
-    scores = {**(agg1.get("scores") or {}), **(agg2.get("scores") or {})}
-
-    section_outputs = {
-        "company_name": company_name,
-        "ticker": ticker,
-        "section_map": raw_section_map,
-        "structured_map": structured_map,
-        "scores": scores,
-        "sources_appendix": sources_appendix,
-        "dcf_anchors": agg2.get("dcf_anchors") or agg1.get("dcf_anchors"),
-        "precomputed_peer_table": (
-            agg2.get("precomputed_peer_table") or agg1.get("precomputed_peer_table")
-        ),
-    }
-
-    fact_sheet = sr_data.get("fact_sheet") or {}
-
-    return section_outputs, fact_sheet

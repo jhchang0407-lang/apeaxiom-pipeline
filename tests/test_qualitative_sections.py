@@ -8,8 +8,8 @@ representative ticker, then verifies:
 - Schema fields match sector variant
 
 Usage:
-    python test_qualitative_sections.py
-    python test_qualitative_sections.py --ticker JPM   # single ticker
+    python tests/test_qualitative_sections.py
+    python tests/test_qualitative_sections.py --ticker JPM   # single ticker
 """
 
 import asyncio

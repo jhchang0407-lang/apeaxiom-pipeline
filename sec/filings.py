@@ -16,7 +16,6 @@ Sections extracted from 10-Q:
   - Item 1A: Risk Factors (if updated)
 """
 
-import hashlib
 import json
 import os
 import re
@@ -24,16 +23,24 @@ from pathlib import Path
 from typing import Optional
 
 import edgar
-
-# Set identity for SEC API
-edgar.set_identity("OpenClaw Research thomas@openclaw.com")
-
 from edgar import Company
+
+from sec.client import require_sec_user_agent
 
 
 # Cache directory
 CACHE_DIR = Path(os.getenv("CACHE_DIR", str(Path(__file__).resolve().parent.parent / "cache")))
 FILINGS_CACHE = CACHE_DIR / "filings"
+
+_identity_set = False
+
+
+def _ensure_identity() -> None:
+    """Set the edgartools SEC identity once, lazily."""
+    global _identity_set
+    if not _identity_set:
+        edgar.set_identity(require_sec_user_agent())
+        _identity_set = True
 
 
 def _cache_path(ticker: str, form: str, accession: str) -> Path:
@@ -82,7 +89,7 @@ def _extract_section(markdown: str, start_item: str, end_items: list[str]) -> st
     return section_text
 
 
-def get_10k_sections(ticker: str, latest: bool = True) -> dict:
+def get_10k_sections(ticker: str) -> dict:
     """Extract key sections from the latest 10-K filing.
 
     Returns:
@@ -99,13 +106,14 @@ def get_10k_sections(ticker: str, latest: bool = True) -> dict:
     """
     ticker = ticker.upper()
 
+    _ensure_identity()
     company = Company(ticker)
     filings = company.get_filings(form="10-K")
 
     if not filings or len(filings) == 0:
         return {"error": f"No 10-K filings found for {ticker}"}
 
-    filing = filings[0] if latest else filings
+    filing = filings[0]
 
     accession = filing.accession_no
     filing_date = str(filing.filing_date)
@@ -143,7 +151,7 @@ def get_10k_sections(ticker: str, latest: bool = True) -> dict:
     return result
 
 
-def get_10q_sections(ticker: str, latest: bool = True) -> dict:
+def get_10q_sections(ticker: str) -> dict:
     """Extract key sections from the latest 10-Q filing.
 
     Returns:
@@ -158,13 +166,14 @@ def get_10q_sections(ticker: str, latest: bool = True) -> dict:
     """
     ticker = ticker.upper()
 
+    _ensure_identity()
     company = Company(ticker)
     filings = company.get_filings(form="10-Q")
 
     if not filings or len(filings) == 0:
         return {"error": f"No 10-Q filings found for {ticker}"}
 
-    filing = filings[0] if latest else filings
+    filing = filings[0]
 
     accession = filing.accession_no
     filing_date = str(filing.filing_date)
@@ -242,22 +251,20 @@ def get_10q_sections(ticker: str, latest: bool = True) -> dict:
 def get_filing_text(
     ticker: str,
     form: str = "10-K",
-    latest: bool = True,
 ) -> dict:
     """Unified interface to get filing text.
 
     Args:
         ticker: Company ticker symbol
         form: "10-K" or "10-Q"
-        latest: If True, return only the latest filing
 
     Returns:
         Dictionary with extracted sections
     """
     if form.upper() == "10-K":
-        return get_10k_sections(ticker, latest=latest)
+        return get_10k_sections(ticker)
     elif form.upper() == "10-Q":
-        return get_10q_sections(ticker, latest=latest)
+        return get_10q_sections(ticker)
     else:
         raise ValueError(f"Unsupported form type: {form}. Use '10-K' or '10-Q'.")
 

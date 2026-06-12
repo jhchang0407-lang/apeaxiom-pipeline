@@ -35,14 +35,6 @@ SKIP_DCF_INDUSTRIES = {
     "Credit Services",
 }
 
-# REITs — separate from SKIP_DCF because they use P/E peer multiples, not bank equity
-_REIT_INDUSTRIES = {
-    "REIT - Diversified", "REIT - Office", "REIT - Retail",
-    "REIT - Residential", "REIT - Industrial",
-    "REIT - Healthcare Facilities", "REIT - Hotel & Motel",
-    "REIT - Mortgage", "REIT - Specialty",
-}
-
 # Industries where DCF is unreliable but EV is valid
 INDUSTRY_VALUATION_CONFIG: dict[str, ValuationConfig] = {
     # Oil & Gas
@@ -266,6 +258,19 @@ INDUSTRY_VALUATION_CONFIG: dict[str, ValuationConfig] = {
 }
 
 
+def _prefix_match(text: str, prefix: str) -> bool:
+    """Prefix match guarded against short/partial-word false positives.
+
+    Requires the prefix to be at least 5 characters or to end at a word
+    boundary (e.g. "Gold" must not match "Golden Entertainment").
+    """
+    if not prefix or not text.startswith(prefix):
+        return False
+    if len(text) == len(prefix):
+        return True
+    return len(prefix) >= 5 or not text[len(prefix)].isalnum()
+
+
 def normalize_industry(s: str) -> str:
     """Normalize FMP industry strings to canonical form."""
     if not s:
@@ -315,10 +320,11 @@ def detect_valuation_mode(
     # Fuzzy match: check if normalized industry starts with a config key
     # (e.g., "Airlines, Airports & Air Services" starts with "Airlines")
     norm_lower = normalized.lower()
-    for cfg_key, cfg_val in INDUSTRY_VALUATION_CONFIG.items():
-        key_lower = cfg_key.lower()
-        if norm_lower.startswith(key_lower) or key_lower.startswith(norm_lower):
-            return "industry_peer", cfg_val
+    if norm_lower:
+        for cfg_key, cfg_val in INDUSTRY_VALUATION_CONFIG.items():
+            key_lower = cfg_key.lower()
+            if _prefix_match(norm_lower, key_lower) or _prefix_match(key_lower, norm_lower):
+                return "industry_peer", cfg_val
 
     # SIC code fallback
     if sic_code:
@@ -335,9 +341,17 @@ def detect_valuation_mode(
         if 6311 <= sic <= 6399:
             return "financial_peer", None
 
-        # REITs (SIC 6500-6599)
-        if 6500 <= sic <= 6599:
-            return "financial_peer", None
+        # REITs (SIC 6500-6599, 6798) — same P/E-primary config as the
+        # industry-string path, not the bank justified-P/B model
+        if 6500 <= sic <= 6599 or sic == 6798:
+            return "industry_peer", INDUSTRY_VALUATION_CONFIG.get(
+                "REIT - Diversified",
+                ValuationConfig(
+                    method="pe", secondary="ev_ebitda",
+                    rationale="REIT GAAP depreciation depresses book value and ROE; P/E (proxy for P/FFO) is the industry standard",
+                    sector_note="REITs are valued on FFO/AFFO multiples.",
+                ),
+            )
 
         # Oil & Gas (SIC 1311, 1381, 2911)
         if sic in (1311, 1381, 2911):
@@ -350,7 +364,7 @@ def detect_valuation_mode(
                 ),
             )
 
-        # Mining (SIC 1040, 1090)
+        # Mining (SIC 1040-1099)
         if 1040 <= sic <= 1099:
             return "industry_peer", INDUSTRY_VALUATION_CONFIG.get(
                 "Gold",

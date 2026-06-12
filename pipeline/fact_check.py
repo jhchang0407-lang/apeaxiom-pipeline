@@ -456,16 +456,13 @@ def fact_check_quarterly(
         patched["text"] = _patch_string(text_val, value_index, state)
 
     # ── Attach verification metadata ────────────────────────────
-    try:
-        patched["_fact_check"] = {
-            "patches_applied": state.patch_count,
-            "verified_claims": state.verified_count,
-            "suspicious_claims_count": len(state.suspicious_claims),
-            "suspicious": state.suspicious_claims[:15],
-            "value_index_size": len(value_index),
-        }
-    except Exception:
-        pass  # metadata attachment failed silently
+    patched["_fact_check"] = {
+        "patches_applied": state.patch_count,
+        "verified_claims": state.verified_count,
+        "suspicious_claims_count": len(state.suspicious_claims),
+        "suspicious": state.suspicious_claims[:15],
+        "value_index_size": len(value_index),
+    }
 
     return {
         "patched_output": patched,

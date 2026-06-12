@@ -391,7 +391,6 @@ _TAG_TO_HUMAN: dict[str, str] = {
     "eps_basic": "Basic EPS",
     "da_usd_m": "Depreciation & Amortization ($M)",
     "da_pct_of_revenue": "D&A as % of Revenue",
-    "dividends_paid_usd_m": "Dividends Paid ($M)",
     "share_repurchases_usd_m": "Share Repurchases ($M)",
     "interest_expense_usd_m": "Interest Expense ($M)",
     "income_tax_expense_usd_m": "Income Tax Expense ($M)",
@@ -415,11 +414,8 @@ _TAG_TO_HUMAN: dict[str, str] = {
     "ocf_margin_pct": "Operating Cash Flow Margin (%)",
 
     # ── Returns ──
-    "roe": "Return on Equity (ROE)",
     "roe_pct": "Return on Equity (%)",
-    "roic": "Return on Invested Capital (ROIC)",
     "roic_pct": "Return on Invested Capital (%)",
-    "roa": "Return on Assets (ROA)",
     "roa_pct": "Return on Assets (%)",
     "roce_pct": "Return on Capital Employed (%)",
 
@@ -468,7 +464,6 @@ _TAG_TO_HUMAN: dict[str, str] = {
     # ── Share Data ──
     "sbc": "Stock-Based Compensation",
     "sbc_usd_m": "Stock-Based Compensation ($M)",
-    "sbc_pct_rev": "SBC as % of Revenue",
     "sbc_pct_of_revenue": "SBC as % of Revenue (%)",
     "sbc_pct_revenue": "SBC as % of Revenue (%)",
     "sbc_to_revenue_pct": "SBC as % of Revenue (%)",
@@ -478,7 +473,6 @@ _TAG_TO_HUMAN: dict[str, str] = {
 
     # ── Valuation Multiples ──
     "ev_to_ebitda": "EV / EBITDA",
-    "ev_to_sales": "EV / Sales",
     "ev_to_fcf": "EV / Free Cash Flow",
     "ev_to_ocf": "EV / Operating Cash Flow",
     "price_to_earnings": "P/E Ratio",
@@ -932,38 +926,6 @@ _TAG_TO_HUMAN: dict[str, str] = {
 }
 
 
-def humanize_keys(obj: Any) -> Any:
-    """Recursively rename dict keys from internal tags to human-readable names.
-
-    - Dicts: rename keys that appear in ``_TAG_TO_HUMAN`` while preserving
-      year-like keys (2020, 2021, Q1, FY2024, etc.) and values unchanged.
-    - Lists: recurse into each element.
-    - Scalars: pass through.
-    """
-    if obj is None:
-        return obj
-    if isinstance(obj, str):
-        return obj
-    if isinstance(obj, (int, float, bool)):
-        return obj
-    if isinstance(obj, list):
-        return [humanize_keys(item) for item in obj]
-    if isinstance(obj, dict):
-        result: dict[str, Any] = {}
-        for key, val in obj.items():
-            if not isinstance(key, str):
-                result[key] = humanize_keys(val)
-                continue
-            # Preserve year-keyed entries, citation keys, and private keys
-            if _YEAR_KEY_RE.match(key) or key.startswith("_"):
-                result[key] = humanize_keys(val)
-            else:
-                human_key = _TAG_TO_HUMAN.get(key, key)
-                result[human_key] = humanize_keys(val)
-        return result
-    return obj
-
-
 # ═══════════════════════════════════════════════════════════════
 # HELPERS (shared across section builders)
 # ═══════════════════════════════════════════════════════════════
@@ -989,12 +951,6 @@ def _safe_get(d: dict | None, *keys: str, default: Any = None) -> Any:
             return default
         current = current.get(k)
     return current if current is not None else default
-
-
-def _yr5(obj: dict | None, annual_years: list[str]) -> list[dict] | None:
-    if not obj:
-        return None
-    return [{"year": yr, "value": obj.get(yr)} for yr in annual_years]
 
 
 def _yr5f(obj: dict | None, parent_key: str, annual_years: list[str]) -> list[dict] | None:
@@ -1091,80 +1047,6 @@ def build_segment_rows(raw_rev_splits: dict, latest_year: str,
             })
 
     base = max(consolidated_revenue, tagged_total) or tagged_total
-    for row in rows:
-        row["pct_of_total"] = round((row["revenue_m"] / base) * 1000) / 10 if base > 0 else None
-    rows.sort(key=lambda r: r.get("revenue_m") or 0, reverse=True)
-    return rows, data_quality
-
-
-def build_geo_rows(raw_rev_splits: dict, latest_year: str,
-                   consolidated_revenue: float,
-                   country: str = "") -> tuple[list[dict], str]:
-    """Build geographic rows.  Returns (rows, data_quality)."""
-    from pipeline.transforms import _deduplicate_geo_dict, _normalize_segment_name
-
-    geo_rev_raw = _safe_get(raw_rev_splits, "geographic_revenue_usd_m", latest_year, default={})
-    geo_yoy_raw = _safe_get(raw_rev_splits, "geographic_yoy_growth_pct", latest_year, default={})
-
-    # Deduplicate overlapping geographic segments (North America + US, etc.)
-    geo_rev = _deduplicate_geo_dict(
-        {_normalize_segment_name(k): v for k, v in geo_rev_raw.items()}
-    ) if geo_rev_raw else {}
-    # Align YoY keys to the same canonical names
-    yoy_normed: dict = {}
-    for k, v in (geo_yoy_raw or {}).items():
-        nk = _normalize_segment_name(k)
-        if nk in geo_rev:
-            yoy_normed[nk] = v
-    geo_yoy = yoy_normed
-
-    tagged_total = sum(v or 0 for v in geo_rev.values())
-
-    rows = [
-        {
-            "region": name,
-            "revenue_m": round(geo_rev[name]),
-            "pct_of_total": None,
-            "yoy_growth": round(geo_yoy.get(name, 0) * 10) / 10 if geo_yoy.get(name) is not None else None,
-        }
-        for name in geo_rev
-        if geo_rev[name] is not None and geo_rev[name] > 0
-    ]
-
-    data_quality = "complete"
-
-    if consolidated_revenue > 0 and tagged_total > 0:
-        coverage = tagged_total / consolidated_revenue
-        if coverage > 1.10:
-            # Segments use a different revenue definition than consolidated
-            # (common for banks: XBRL geo segments report gross revenue but
-            # income statement uses net interest income). Data is unusable.
-            data_quality = "unusable"
-            rows = []
-        elif coverage < 0.10:
-            data_quality = "unusable"
-            rows = []
-        elif coverage < 0.70:
-            data_quality = "residual_inferred"
-            hq = (country or "").upper()
-            if hq in ("US", "UNITED STATES"):
-                label = "United States (Inferred)"
-            elif hq in ("CA", "CANADA"):
-                label = "Canada (Inferred)"
-            elif country:
-                label = f"{country} (Inferred)"
-            else:
-                label = "Domestic (Inferred)"
-            rows.append({
-                "region": label,
-                "revenue_m": round(consolidated_revenue - tagged_total),
-                "pct_of_total": None,
-                "yoy_growth": None,
-            })
-    elif tagged_total == 0:
-        data_quality = "unusable"
-
-    base = consolidated_revenue if consolidated_revenue > 0 else tagged_total
     for row in rows:
         row["pct_of_total"] = round((row["revenue_m"] / base) * 1000) / 10 if base > 0 else None
     rows.sort(key=lambda r: r.get("revenue_m") or 0, reverse=True)
@@ -1322,6 +1204,59 @@ def to_openai(s: Any) -> Any:
             r["required"] = list(r["properties"].keys())
         r["additionalProperties"] = False
     return r
+
+
+# ── Analytical stance block (appended to every body-section schema) ──
+# Forces each section to commit to a debate, a steelman, and a falsifier.
+# Schema-level enforcement: unlike prompt instructions, required fields
+# cannot be skipped by the writer.
+
+_ANALYTICAL_STANCE_PROP = {
+    "analytical_stance": {
+        "type": "object",
+        "properties": {
+            "key_debate": {
+                "type": "string",
+                "description": (
+                    "2-4 sentences. The genuine point of disagreement between bulls "
+                    "and bears on THIS section's topic — what informed investors "
+                    "actually argue about, grounded in the data provided. Not a "
+                    "generic risk statement."
+                ),
+            },
+            "strongest_counterargument": {
+                "type": "string",
+                "description": (
+                    "2-4 sentences. The single strongest evidence-based argument "
+                    "AGAINST this section's assessment, stated the way a skeptic "
+                    "would state it, citing specific figures from the data."
+                ),
+            },
+            "what_would_change_this_view": {
+                "type": "string",
+                "description": (
+                    "1-3 sentences. The specific observable evidence — a metric "
+                    "crossing a threshold, an event, a disclosure — that would "
+                    "force a revision of this section's assessment."
+                ),
+            },
+        },
+        "required": ["key_debate", "strongest_counterargument", "what_would_change_this_view"],
+        "additionalProperties": False,
+    },
+}
+
+
+def _with_stance(schema: dict) -> dict:
+    """Return a copy of *schema* with the analytical_stance block appended."""
+    s = deepcopy(schema)
+    props = s.get("properties")
+    if not isinstance(props, dict) or "analytical_stance" in props:
+        return s
+    props.update(deepcopy(_ANALYTICAL_STANCE_PROP))
+    if isinstance(s.get("required"), list):
+        s["required"] = s["required"] + ["analytical_stance"]
+    return s
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1556,7 +1491,14 @@ SECTION_SCHEMAS[5] = {
             },
             "required": ["classification", "paragraph"],
         },
-        "moat_score": {"type": "integer", "description": "Moat strength score 0-100."},
+        "moat_score": {"type": "integer", "description": (
+            "Moat strength 0-100. Calibrate: 85-100 = multiple reinforcing moats with direct "
+            "pricing-power evidence (realized price increases without share loss); 65-84 = one "
+            "clear durable moat with quantified switching costs or network effects; 40-64 = real "
+            "but replicable advantages (scale or brand without pricing evidence); 20-39 = weak or "
+            "eroding advantages; 0-19 = commodity competition. Most companies score below 65 — "
+            "reserve 80+ for demonstrated, not asserted, power."
+        )},
     },
     "required": ["section_number", "section_thesis", "opening_paragraph",
                   "moat_blocks", "overall_assessment", "moat_score"],
@@ -2685,7 +2627,13 @@ SECTION_SCHEMAS[9] = {
             "required": ["runway", "at_scale"],
         },
         "margin_evolution": {"type": "string", "description": "4-6 sentences. Expected margin trajectory, operating leverage, and mix shift impact."},
-        "growth_score": {"type": "integer"},
+        "growth_score": {"type": "integer", "description": (
+            "Growth quality 0-100. Calibrate: 85-100 = double-digit organic revenue CAGR with "
+            "stable or expanding margins and a quantified runway; 65-84 = high-single-digit "
+            "durable growth, or faster but visibly decelerating; 40-64 = GDP-plus or mid-cycle "
+            "cyclical growth; 20-39 = flat-to-low growth with mix headwinds; 0-19 = structural "
+            "decline. Score the trajectory shown in the data, not the company narrative."
+        )},
     },
     "required": ["section_number", "section_thesis", "opening_paragraph", "market_opportunity",
                   "near_term_catalysts", "medium_term_drivers", "long_term_position",
@@ -2770,7 +2718,13 @@ SECTION_SCHEMAS[10] = {
             ),
         },
         "synthesis": {"type": "string"},
-        "quality_score": {"type": "integer"},
+        "quality_score": {"type": "integer", "description": (
+            "Financial quality 0-100. Calibrate: 85-100 = returns on capital well above cost of "
+            "capital with high FCF conversion and conservative leverage; 65-84 = solid returns "
+            "with one blemish (leverage, conversion, or volatility); 40-64 = average returns or "
+            "inconsistent FCF; 20-39 = returns below cost of capital or a strained balance "
+            "sheet; 0-19 = value-destructive economics. Anchor to the computed ratios provided."
+        )},
     },
     # NOTE: "required" is intentionally omitted here. The to_openai()
     # converter auto-generates it from properties.keys(), which is
@@ -3440,9 +3394,9 @@ _SECTION_TEMPLATE_STUBS: dict[int, str] = {
     6: "\nSECTION 6: INDUSTRY & COMPETITIVE DYNAMICS -- 700-1000 words\nMARKET STRUCTURE. COMPETITIVE LANDSCAPE. DYNAMICS. INDUSTRY FORCES. TAILWINDS. HEADWINDS.\nTotal memo HARD CAP is 18,000 words. Stay within your section word target.",
     7: ("\nSECTION 7: CUSTOMER ANALYSIS -- 500-700 words\n"
         "CUSTOMER COMPOSITION. GEOGRAPHIC SPLIT. STICKINESS. UNIT ECONOMICS. WORKING CAPITAL.\n"
-        "GEOGRAPHIC DATA DISCIPLINE: Use ONLY the precomputed_geo_rows data for geographic analysis.\n"
+        "GEOGRAPHIC DATA DISCIPLINE: No precomputed geographic revenue tables are provided.\n"
         "Do NOT compute your own geographic revenue totals by summing individual regions.\n"
-        "Do NOT cite geographic revenue figures that are not in the precomputed data.\n"
+        "Do NOT cite geographic revenue figures that are not in the provided facts.\n"
         "If geographic data is sparse or missing regions, say so — do NOT fill gaps with estimates.\n"
         "Total memo HARD CAP is 18,000 words. Stay within your section word target."),
     8: "\nSECTION 8: MANAGEMENT & CAPITAL ALLOCATION -- 600-900 words\nLEADERSHIP TEAM. EXECUTION. CAPITAL ALLOCATION. GOVERNANCE.\nTotal memo HARD CAP is 18,000 words. Stay within your section word target.",
@@ -3477,7 +3431,7 @@ _SECTION_TEMPLATE_STUBS: dict[int, str] = {
 }
 
 
-def _build_section_template(section_num: int, **kwargs: Any) -> str:
+def _build_section_template(section_num: int) -> str:
     stub = _SECTION_TEMPLATE_STUBS.get(section_num, "")
     return GLOBAL_RULES + stub
 
@@ -4690,8 +4644,6 @@ def distribute_sections(
     # ── Pre-computed table data ─────────────────────────────────
     segment_rows, seg_data_quality = build_segment_rows(
         raw_seg, latest_year, consolidated_revenue, ident.get("country", ""))
-    geo_rows, geo_data_quality = build_geo_rows(
-        raw_seg, latest_year, consolidated_revenue, ident.get("country", ""))
 
     fin_tables = build_financial_table_rows({
         "incStmt": raw_inc, "margins": raw_margins, "cfStmt": raw_cf,
@@ -5562,7 +5514,7 @@ def distribute_sections(
     result["section_2"] = {
         "section_number": 2, "section_title": "Company Overview",
         "word_target": "400-600 words", "min_words": 300,
-        "schema": to_openai(SECTION_SCHEMAS[2]),
+        "schema": to_openai(_with_stance(SECTION_SCHEMAS[2])),
         "facts": _s2_facts,
         "template": _build_section_template(2),
     }
@@ -5570,7 +5522,7 @@ def distribute_sections(
     result["section_3"] = {
         "section_number": 3, "section_title": "Company History & Key Milestones",
         "word_target": "500-700 words", "min_words": 350,
-        "schema": to_openai(SECTION_SCHEMAS[3]),
+        "schema": to_openai(_with_stance(SECTION_SCHEMAS[3])),
         "facts": build_section_3_context(**_common, ident=ident, raw_inc=raw_inc, hist_mile=hist_mile),
         "template": _build_section_template(3),
     }
@@ -5583,7 +5535,7 @@ def distribute_sections(
     result["section_4"] = {
         "section_number": 4, "section_title": _get_section_4_title(subsector),
         "word_target": "500-800 words", "min_words": 400,
-        "schema": to_openai(_get_section_4_schema(subsector)),
+        "schema": to_openai(_with_stance(_get_section_4_schema(subsector))),
         "facts": _s4_facts,
         "precomputed_segment_rows": segment_rows,
         "template": _build_section_template(4),
@@ -5595,7 +5547,7 @@ def distribute_sections(
     result["section_5"] = {
         "section_number": 5, "section_title": "Competitive Moats",
         "word_target": "600-900 words", "min_words": 450,
-        "schema": to_openai(SECTION_SCHEMAS[5]),
+        "schema": to_openai(_with_stance(SECTION_SCHEMAS[5])),
         "facts": _s5_facts,
         "template": _build_section_template(5),
     }
@@ -5606,7 +5558,7 @@ def distribute_sections(
     result["section_6"] = {
         "section_number": 6, "section_title": "Industry & Competitive Dynamics",
         "word_target": "700-1000 words", "min_words": 500,
-        "schema": to_openai(SECTION_SCHEMAS[6]),
+        "schema": to_openai(_with_stance(SECTION_SCHEMAS[6])),
         "facts": _s6_facts,
         "template": _build_section_template(6),
     }
@@ -5623,7 +5575,7 @@ def distribute_sections(
     result["section_7"] = {
         "section_number": 7, "section_title": _get_section_7_title(subsector),
         "word_target": "500-700 words", "min_words": 350,
-        "schema": to_openai(_get_section_7_schema(subsector)),
+        "schema": to_openai(_with_stance(_get_section_7_schema(subsector))),
         "facts": _s7_facts,
         "template": _build_section_template(7),
     }
@@ -5636,7 +5588,7 @@ def distribute_sections(
     result["section_8"] = {
         "section_number": 8, "section_title": "Management & Capital Allocation",
         "word_target": "600-900 words", "min_words": 400,
-        "schema": to_openai(SECTION_SCHEMAS[8]),
+        "schema": to_openai(_with_stance(SECTION_SCHEMAS[8])),
         "facts": _s8_facts,
         "precomputed_capital_allocation": fin_tables["capital_allocation"],
         "template": _build_section_template(8),
@@ -5650,7 +5602,7 @@ def distribute_sections(
     result["section_9"] = {
         "section_number": 9, "section_title": "Growth Prospects & Catalysts",
         "word_target": "600-900 words", "min_words": 400,
-        "schema": to_openai(SECTION_SCHEMAS[9]),
+        "schema": to_openai(_with_stance(SECTION_SCHEMAS[9])),
         "facts": _s9_facts,
         "template": _build_section_template(9),
     }
@@ -5659,7 +5611,7 @@ def distribute_sections(
     _s10_entry: dict[str, Any] = {
         "section_number": 10, "section_title": _get_section_10_title(sector_family),
         "word_target": "800-1100 words", "min_words": 550,
-        "schema": to_openai(_get_section_10_schema(sector_family)),
+        "schema": to_openai(_with_stance(_get_section_10_schema(sector_family))),
         "facts": build_section_10_context(**_common, fcf_conversion_5yr=fcf_conv, ident=ident,
                                          family=sector_family, sector_kpis=fs.get("_sec_sector_kpis")),
         "template": _build_section_template(10),
@@ -5686,7 +5638,7 @@ def distribute_sections(
     result["section_11"] = {
         "section_number": 11, "section_title": _get_section_11_title(sector_family),
         "word_target": "800-1100 words", "min_words": 550,
-        "schema": to_openai(_get_section_11_schema(sector_family)),
+        "schema": to_openai(_with_stance(_get_section_11_schema(sector_family))),
         "facts": build_section_11_context(**_common, peer_medians_formatted=peer_medians_formatted,
                                           raw_peer_bench=raw_peer_bench, peer_bench=peer_bench,
                                           raw_bal_sheet=raw_bal, ident=ident,
@@ -5708,7 +5660,7 @@ def distribute_sections(
     result["section_13"] = {
         "section_number": 13, "section_title": "Risk Assessment",
         "word_target": "700-1000 words", "min_words": 450,
-        "schema": to_openai(SECTION_SCHEMAS[13]),
+        "schema": to_openai(_with_stance(SECTION_SCHEMAS[13])),
         "facts": build_section_13_context(**_common, risk_assess=risk_assess, seg=seg,
                                           inc_stmt=inc_stmt, fwd_est=fwd_est, ident=ident,
                                           sector_kpis=fs.get("_sec_sector_kpis")),

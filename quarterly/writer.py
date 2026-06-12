@@ -117,7 +117,7 @@ async def write_quarterly(distributed: dict) -> dict:
     """
     import openai
 
-    client = openai.AsyncOpenAI(api_key=OPENAI_API_KEY)
+    client = openai.AsyncOpenAI(api_key=OPENAI_API_KEY, timeout=300)
     model = WRITER_MODEL or "gpt-5-mini"
 
     writer_template = distributed["writer_template"]
@@ -168,11 +168,10 @@ async def write_quarterly(distributed: dict) -> dict:
 
         if attempt == 0:
             # Retry with stronger instruction
-            if is_reasoning:
-                messages[-1]["content"] += (
-                    "\n\nYour previous output was not valid JSON. "
-                    "Output ONLY the JSON object, nothing else."
-                )
+            messages[-1]["content"] += (
+                "\n\nYour previous output was not valid JSON. "
+                "Output ONLY the JSON object, nothing else."
+            )
 
     # All attempts failed — return raw text with parse error flag
     return {"raw_text": content, "_parse_error": True}

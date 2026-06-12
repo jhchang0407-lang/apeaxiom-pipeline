@@ -17,7 +17,7 @@ class DCFAnchors:
     """Input parameters for DCF computation."""
 
     revenue_latest: float = 0.0  # Latest year revenue (same unit as net_debt/sbc)
-    fcf_margin: float = 0.0  # FCF/Revenue as decimal (e.g., 0.25)
+    fcf_margin: Optional[float] = None  # FCF/Revenue as decimal (e.g., 0.25)
     revenue_growth: float = 0.0  # Revenue growth rate as decimal
     net_debt: float = 0.0  # Net debt (positive = debt, negative = net cash)
     shares_diluted: float = 0.0  # Weighted avg diluted shares (same unit as revenue)
@@ -55,6 +55,12 @@ def _run_dcf_core(anchors: DCFAnchors) -> DCFResult:
     if anchors.shares_diluted <= 0:
         result.error = "Shares outstanding is zero or negative"
         return result
+    if anchors.fcf_margin is None:
+        result.error = "FCF margin unavailable — DCF not meaningful"
+        return result
+    if anchors.fcf_margin <= 0:
+        result.error = "negative FCF margin — DCF not meaningful"
+        return result
     if anchors.wacc <= anchors.terminal_growth:
         result.error = "WACC must be greater than terminal growth rate"
         return result
@@ -69,8 +75,11 @@ def _run_dcf_core(anchors: DCFAnchors) -> DCFResult:
     pv_fcfs = []
 
     for year in range(1, anchors.projection_years + 1):
-        # Growth decays toward terminal rate
-        yr_growth = max(g_terminal, growth * (decay ** year))
+        # Growth decays toward terminal rate (shrinking companies decay
+        # toward zero from below instead of being floored at terminal)
+        yr_growth = growth * (decay ** year)
+        if growth >= 0:
+            yr_growth = max(g_terminal, yr_growth)
         revenue *= (1 + yr_growth)
         fcf = revenue * anchors.fcf_margin
         pv = fcf / ((1 + wacc) ** year)
@@ -82,8 +91,8 @@ def _run_dcf_core(anchors: DCFAnchors) -> DCFResult:
             "pv_fcf": round(pv),
         })
 
-    # Terminal value (Gordon Growth Model)
-    terminal_fcf = pv_fcfs[-1]["fcf"]
+    # Terminal value (Gordon Growth Model) — use the unrounded final-year FCF
+    terminal_fcf = fcf
     terminal_value = terminal_fcf * (1 + g_terminal) / (wacc - g_terminal)
     pv_terminal = terminal_value / ((1 + wacc) ** anchors.projection_years)
 
@@ -93,6 +102,9 @@ def _run_dcf_core(anchors: DCFAnchors) -> DCFResult:
 
     # Equity value
     equity_value = enterprise_value - anchors.net_debt
+    if equity_value <= 0:
+        result.error = "Equity value is negative — net debt exceeds enterprise value"
+        return result
 
     # Fair value per share
     fair_value = equity_value / anchors.shares_diluted

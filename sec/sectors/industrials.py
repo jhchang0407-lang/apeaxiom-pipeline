@@ -38,10 +38,6 @@ def compute_industrial_kpis(gaap: dict, years: int = 5) -> dict:
         "NetIncomeLoss",
     ], years)
 
-    sga = extract_annual_values(gaap, [
-        "SellingGeneralAndAdministrativeExpense",
-    ], years)
-
     rd_expense = extract_annual_values(gaap, [
         "ResearchAndDevelopmentExpense",
     ], years)
@@ -82,15 +78,6 @@ def compute_industrial_kpis(gaap: dict, years: int = 5) -> dict:
     # ── Working Capital ─────────────────────────────────────────────────
     inventory = extract_annual_values(gaap, [
         "InventoryNet",
-    ], years)
-
-    accounts_receivable = extract_annual_values(gaap, [
-        "AccountsReceivableNetCurrent",
-        "AccountsReceivableNet",
-    ], years)
-
-    accounts_payable = extract_annual_values(gaap, [
-        "AccountsPayableCurrent",
     ], years)
 
     contract_assets = extract_annual_values(gaap, [
@@ -151,14 +138,10 @@ def compute_industrial_kpis(gaap: dict, years: int = 5) -> dict:
     gp_by_date = {e["date"]: e["val"] for e in gross_profit}
     opinc_by_date = {e["date"]: e["val"] for e in operating_income}
     ni_by_date = {e["date"]: e["val"] for e in net_income}
-    sga_by_date = {e["date"]: e["val"] for e in sga}
     rd_by_date = {e["date"]: e["val"] for e in rd_expense}
     da_by_date = {e["date"]: e["val"] for e in depreciation}
     ocf_by_date = {e["date"]: e["val"] for e in ocf}
     capex_by_date = {e["date"]: e["val"] for e in capex}
-    inv_by_date = {e["date"]: e["val"] for e in inventory}
-    ar_by_date = {e["date"]: e["val"] for e in accounts_receivable}
-    ap_by_date = {e["date"]: e["val"] for e in accounts_payable}
     assets_by_date = {e["date"]: e["val"] for e in total_assets}
     eq_by_date = {e["date"]: e["val"] for e in equity}
     debt_by_date = {e["date"]: e["val"] for e in total_debt}
@@ -177,14 +160,10 @@ def compute_industrial_kpis(gaap: dict, years: int = 5) -> dict:
         gp = gp_by_date.get(date)
         op = opinc_by_date.get(date)
         ni = ni_by_date.get(date)
-        sg = sga_by_date.get(date)
         rd = rd_by_date.get(date)
         da = da_by_date.get(date)
         oc = ocf_by_date.get(date)
         cx = capex_by_date.get(date)
-        inv = inv_by_date.get(date)
-        ar = ar_by_date.get(date)
-        ap = ap_by_date.get(date)
         assets = assets_by_date.get(date)
         eq = eq_by_date.get(date)
         debt = debt_by_date.get(date)
@@ -280,25 +259,26 @@ def compute_industrial_kpis(gaap: dict, years: int = 5) -> dict:
             "fcfMargin": round(fcf_margin, 4) if fcf_margin is not None else None,
             # Growth & backlog
             "revenueGrowth": round(rev_growth, 4) if rev_growth is not None else None,
-            "backlogToRevenue": round(backlog_to_revenue, 2) if backlog_to_revenue else None,
+            "backlogToRevenue": round(backlog_to_revenue, 2) if backlog_to_revenue is not None else None,
             "backlogGrowth": round(backlog_growth, 4) if backlog_growth is not None else None,
-            "bookToBill": round(book_to_bill, 2) if book_to_bill else None,
+            "bookToBill": round(book_to_bill, 2) if book_to_bill is not None else None,
             # Capital efficiency
-            "capexIntensity": round(capex_intensity, 4) if capex_intensity else None,
-            "assetTurnover": round(asset_turnover, 4) if asset_turnover else None,
-            "rdIntensity": round(rd_intensity, 4) if rd_intensity else None,
+            "capexIntensity": round(capex_intensity, 4) if capex_intensity is not None else None,
+            "assetTurnover": round(asset_turnover, 4) if asset_turnover is not None else None,
+            "ppeTurnover": round(ppe_turnover, 4) if ppe_turnover is not None else None,
+            "rdIntensity": round(rd_intensity, 4) if rd_intensity is not None else None,
             # Returns
-            "roa": round(roa, 4) if roa else None,
-            "roe": round(roe, 4) if roe else None,
-            "roic": round(roic, 4) if roic else None,
-            "roce": round(roce, 4) if roce else None,
+            "roa": round(roa, 4) if roa is not None else None,
+            "roe": round(roe, 4) if roe is not None else None,
+            "roic": round(roic, 4) if roic is not None else None,
+            "roce": round(roce, 4) if roce is not None else None,
             # Leverage
-            "debtToEbitda": round(debt_to_ebitda, 2) if debt_to_ebitda else None,
-            "debtToEquity": round(debt_to_equity, 4) if debt_to_equity else None,
+            "debtToEbitda": round(debt_to_ebitda, 2) if debt_to_ebitda is not None else None,
+            "debtToEquity": round(debt_to_equity, 4) if debt_to_equity is not None else None,
             # Quality
-            "ocfToNetIncome": round(ocf_to_ni, 4) if ocf_to_ni else None,
-            "payoutRatio": round(payout_ratio, 4) if payout_ratio else None,
-            "goodwillIntensity": round(goodwill_pct, 4) if goodwill_pct else None,
+            "ocfToNetIncome": round(ocf_to_ni, 4) if ocf_to_ni is not None else None,
+            "payoutRatio": round(payout_ratio, 4) if payout_ratio is not None else None,
+            "goodwillIntensity": round(goodwill_pct, 4) if goodwill_pct is not None else None,
         })
 
     kpis["computedMetrics"] = computed

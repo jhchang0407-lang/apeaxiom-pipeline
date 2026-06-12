@@ -6,16 +6,15 @@ Handles the 3-stage writing dependency chain:
   Stage 3B: Body sections 2-11, 13 (parallel) — after 3A merge
   Stage 3C: Synthesis sections 12, 1, 14 (parallel) — reads full memo body
 
-Uses OpenAI models (gpt-4o, gpt-5-mini, etc.).
+Uses OpenAI models (configured via WRITER_MODEL / RESEARCH_AGENT_MODEL).
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import os
 import time
-from typing import Any, Optional
+from typing import Any
 
 from config.settings import (
     OPENAI_API_KEY,
@@ -52,7 +51,7 @@ def _is_reasoning_model(model: str) -> bool:
 
 async def _call_openai(
     messages: list[dict],
-    model: str = "gpt-4o",
+    model: str = WRITER_MODEL,
     temperature: float = 0.4,
     max_tokens: int = 4096,
     response_format: dict | None = None,
@@ -60,7 +59,7 @@ async def _call_openai(
     """Call OpenAI API asynchronously."""
     import openai
 
-    client = openai.AsyncOpenAI(api_key=OPENAI_API_KEY)
+    client = openai.AsyncOpenAI(api_key=OPENAI_API_KEY, timeout=300)
 
     kwargs = {
         "model": model,
@@ -136,7 +135,11 @@ async def write_section(
     schema = section_input.get("schema", {})
     template = section_input.get("template", "")
 
-    # Context can come from "context" (synthesis sections) or "facts" (body sections)
+    # Context can come from "context" (synthesis sections) or "facts" (body sections).
+    # Synthesis sections (1, 12, 14) read the assembled memo body, which is far
+    # larger than any body section's context — give them a much higher cap so the
+    # executive summary and conclusion actually see the whole memo.
+    context_char_limit = 60000 if section_num in (1, 12, 14) else 15000
     context = section_input.get("context", "")
     facts = section_input.get("facts", {})
     qualitative = section_input.get("qualitative_inputs", "")
@@ -184,8 +187,8 @@ async def write_section(
     if context:
         ctx_humanized = sanitize_for_llm(context) if isinstance(context, dict) else context
         ctx_str = ctx_humanized if isinstance(ctx_humanized, str) else json.dumps(ctx_humanized, indent=2, default=str)
-        if len(ctx_str) > 15000:
-            ctx_str = ctx_str[:15000] + "\n... [truncated]"
+        if len(ctx_str) > context_char_limit:
+            ctx_str = ctx_str[:context_char_limit] + "\n... [truncated]"
         user_parts.append(f"\n### Context\n{ctx_str}")
 
     if qualitative:
@@ -218,8 +221,13 @@ async def write_section(
         "All financial figures are pre-formatted — use them as-is in prose. "
         f"SECTION LENGTH GUIDE: {word_target}. The full memo targets 12,000-15,000 words total. "
         "Write with analytical depth — go deeper where the data is interesting or differentiated. "
-        "Each subsection should be substantive paragraphs with specific numbers and analysis. "
-        "Do NOT be terse — this is a sell-side research memo, not a summary. "
+        "CLAIM DENSITY over length: every paragraph must contain at least one specific "
+        "figure, named entity, or dated fact from the provided data. Never pad. "
+        "Banned hedging filler: 'could potentially', 'it remains to be seen', "
+        "'only time will tell', 'going forward' as a sentence opener, and "
+        "'well-positioned' unless immediately followed by the evidence. "
+        "When the data is genuinely uncertain, state precisely what the data shows "
+        "and what it does not show — do not paper over gaps with vague optimism. "
         "IMPORTANT: Focus on metrics that are UNIQUELY relevant to this section's topic. "
         "Do not repeat general company stats (total revenue, gross margin, etc.) that belong in other sections. "
         "Return your response as a JSON object matching the provided schema."
@@ -227,16 +235,47 @@ async def write_section(
 
     messages = [{"role": "user", "content": user_message}]
 
+    # Strict structured outputs when a schema is available: the API then
+    # guarantees required fields, enums, and types instead of relying on
+    # prompt-following. Fall back to json_object if the API rejects the
+    # schema (e.g. nesting/size limits) so one bad schema can't kill a section.
+    strict_format = None
+    if schema and isinstance(schema, dict) and schema.get("type") == "object":
+        strict_format = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": f"memo_section_{section_num}",
+                "strict": True,
+                "schema": schema,
+            },
+        }
+
     t0 = time.time()
+    used_format = strict_format or {"type": "json_object"}
     try:
-        result = await call_llm(
-            messages=messages,
-            model=model,
-            temperature=0.4,
-            max_tokens=8192,
-            system=system_prompt,
-            response_format={"type": "json_object"},
-        )
+        try:
+            result = await call_llm(
+                messages=messages,
+                model=model,
+                temperature=0.4,
+                max_tokens=8192,
+                system=system_prompt,
+                response_format=used_format,
+            )
+        except Exception as schema_err:
+            if strict_format is None:
+                raise
+            # Schema rejected or strict call failed — retry unconstrained
+            print(f"  ⚠️ S{section_num}: strict schema rejected ({schema_err}); falling back to json_object")
+            used_format = {"type": "json_object"}
+            result = await call_llm(
+                messages=messages,
+                model=model,
+                temperature=0.4,
+                max_tokens=8192,
+                system=system_prompt,
+                response_format=used_format,
+            )
     except Exception as e:
         result = {
             "error": f"{type(e).__name__}: {e}",
@@ -281,7 +320,7 @@ async def write_section(
                     temperature=0.5,
                     max_tokens=8192,
                     system=system_prompt,
-                    response_format={"type": "json_object"},
+                    response_format=used_format,
                 )
             except Exception:
                 pass  # Keep original result on retry failure
@@ -350,10 +389,7 @@ async def call_research_agent(
 # ── 3-STAGE WRITING PIPELINE ─────────────────────────────────
 
 async def write_all_sections(
-    fact_sheet: dict,
     section_inputs: dict,
-    filing_text: dict | None = None,
-    include_pricing: bool = True,
     writer_model: str | None = None,
     agent_model: str | None = None,
 ) -> dict:
@@ -364,10 +400,7 @@ async def write_all_sections(
     Stage 3C: Synthesis sections 12, 1, 14 (parallel — reads full body)
 
     Args:
-        fact_sheet: Formatted quantitative fact sheet
         section_inputs: Dict of section inputs from distribute_sections()
-        filing_text: Filing text dict with 10-K/10-Q for agents
-        include_pricing: Include price targets and recommendations
         writer_model: Override writer model
         agent_model: Override research agent model
 
@@ -508,6 +541,37 @@ async def write_all_sections(
     }
 
 
+_DIGEST_SKIP_KEYS = {"section_number", "section_title", "word_target", "error"}
+
+
+def _digest_output(node, label: str = "", depth: int = 0) -> list[str]:
+    """Flatten a structured section output into compact labeled prose lines.
+
+    Far denser than a JSON dump (no braces/quotes/indent overhead), so the
+    synthesis sections can read the entire memo body within their context cap.
+    """
+    lines: list[str] = []
+    if node is None:
+        return lines
+    if isinstance(node, str):
+        text = node.strip()
+        if text:
+            lines.append(f"**{label}:** {text}" if label else text)
+    elif isinstance(node, (int, float, bool)):
+        if label:
+            lines.append(f"**{label}:** {node}")
+    elif isinstance(node, dict):
+        for k, v in node.items():
+            if k in _DIGEST_SKIP_KEYS:
+                continue
+            sub_label = k.replace("_", " ").title()
+            lines.extend(_digest_output(v, sub_label, depth + 1))
+    elif isinstance(node, list):
+        for item in node:
+            lines.extend(_digest_output(item, label, depth + 1))
+    return lines
+
+
 def _assemble_partial_memo(section_outputs: dict) -> str:
     """Combine body section outputs into a single memo string.
 
@@ -523,17 +587,8 @@ def _assemble_partial_memo(section_outputs: dict) -> str:
         output = result.get("output", {})
         title = result.get("section_title", f"Section {num}")
 
-        # Extract text from structured output
         if isinstance(output, dict):
-            # Try to find the main text content
-            text = output.get("raw_text", "")
-            if not text:
-                text = output.get("section_text", "")
-            if not text:
-                text = output.get("content", "")
-            if not text:
-                # Fallback: serialize the whole thing
-                text = json.dumps(output, indent=2)
+            text = "\n".join(_digest_output(output))
         else:
             text = str(output)
 

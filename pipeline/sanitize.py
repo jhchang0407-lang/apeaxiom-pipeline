@@ -65,14 +65,20 @@ def _is_formatted_string(s: str) -> bool:
     return any(tok in s for tok in ("$", "%", "x", "→")) or s == "NM"
 
 
+# Precompiled once at import — recompiling ~900 patterns per call is slow.
+_TOKEN_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(rf"\b{re.escape(raw_key)}\b"), TOKEN_LABELS[raw_key])
+    for raw_key in sorted(TOKEN_LABELS.keys(), key=len, reverse=True)
+]
+
+
 def _sanitize_text_tokens(text: str) -> str:
     """Replace internal tag references inside free-text strings."""
     out = text
     if "_" not in out and not re.search(r"[a-z][A-Z]", out):
         return out
-    for raw_key in sorted(TOKEN_LABELS.keys(), key=len, reverse=True):
-        label = TOKEN_LABELS[raw_key]
-        out = re.sub(rf"\b{re.escape(raw_key)}\b", label, out)
+    for pattern, label in _TOKEN_PATTERNS:
+        out = pattern.sub(label, out)
     return out
 
 

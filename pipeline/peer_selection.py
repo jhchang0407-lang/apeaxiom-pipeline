@@ -17,7 +17,7 @@ import json
 import re
 from typing import Any
 
-from config.settings import FMP_API_KEY, FMP_BASE_URL, OPENAI_API_KEY
+from config.settings import BANK_TICKERS, FMP_API_KEY, FMP_BASE_URL, OPENAI_API_KEY
 
 
 # ══════════════════════════════════════════════════════════════
@@ -88,7 +88,7 @@ async def select_peers(
         f"Return the JSON peer list now."
     )
 
-    client = openai.AsyncOpenAI(api_key=OPENAI_API_KEY)
+    client = openai.AsyncOpenAI(api_key=OPENAI_API_KEY, timeout=120)
 
     response = await client.chat.completions.create(
         model=model,
@@ -122,14 +122,6 @@ async def select_peers(
 # ══════════════════════════════════════════════════════════════
 # 2. FETCH FINANCIAL DATA FOR PEERS
 # ══════════════════════════════════════════════════════════════
-
-# Bank tickers that need special revenue handling
-_BANK_TICKERS = frozenset({
-    "JPM", "BAC", "WFC", "GS", "MS", "C", "USB", "PNC", "TFC",
-    "SCHW", "COF", "BK", "STT", "FITB", "HBAN", "MTB", "KEY",
-    "RF", "CFG", "ALLY",
-})
-
 
 async def _fetch_fmp(
     client: Any,
@@ -176,7 +168,7 @@ async def _fetch_single_peer(
         cashflow = cashflow if isinstance(cashflow, list) else []
         profile_data = profile[0] if isinstance(profile, list) and profile else {}
 
-        is_bank = symbol.upper() in _BANK_TICKERS
+        is_bank = symbol.upper() in BANK_TICKERS
         _sector = (profile_data.get("sector") or "").lower()
         _industry = (profile_data.get("industry") or "").lower()
         is_insurance = "insurance" in _industry
@@ -293,7 +285,6 @@ async def _fetch_single_peer(
                     fy_data["market_cap_usd_b"] = _r(fd_mkt_cap / 1e9)
 
                     # Fully diluted EV: market cap + net debt
-                    net_debt = fy_data.get("enterprise_value_usd_b")
                     ev_from_km = fy_data.get("enterprise_value_usd_b")
                     mkt_cap_from_km = (fy_data.get("_km_market_cap_usd_b") or 0) * 1e9
                     if ev_from_km and mkt_cap_from_km > 0:
@@ -600,7 +591,7 @@ async def run_peer_pipeline(
             if subj_stats.get(ticker.upper(), {}).get("present", 0) == 0:
                 family = ""
         except Exception:
-            family = family
+            pass
 
     if family and len(symbols) > 5:
         try:

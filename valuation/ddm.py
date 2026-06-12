@@ -144,7 +144,7 @@ def run_ddm(anchors: DDMAnchors) -> DDMResult:
         "terminal_growth": round(g_terminal * 100, 1),
         "cost_of_equity": round(coe * 100, 1),
         "projection_years": 5,
-        "payout_ratio": round((anchors.payout_ratio or d0 / anchors.eps_latest if anchors.eps_latest > 0 else 0) * 100, 1),
+        "payout_ratio": round((anchors.payout_ratio or (d0 / anchors.eps_latest if anchors.eps_latest > 0 else 0)) * 100, 1),
     }
 
     return result

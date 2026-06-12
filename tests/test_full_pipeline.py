@@ -9,8 +9,8 @@ Runs the complete pipeline for AAPL including:
 - Scorecard JSON + Discord
 
 Usage:
-    python test_full_pipeline.py [ticker]
-    python test_full_pipeline.py AAPL
+    python tests/test_full_pipeline.py [ticker]
+    python tests/test_full_pipeline.py AAPL
 """
 
 import asyncio
@@ -25,7 +25,7 @@ async def main():
     mode = "website"
 
     print(f"\n{'='*60}")
-    print(f"  OpenClaw Full Pipeline Test")
+    print(f"  Ape Axiom Full Pipeline Test")
     print(f"  Ticker: {ticker}  |  Mode: {mode}")
     print(f"{'='*60}\n")
 

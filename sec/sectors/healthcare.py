@@ -18,17 +18,6 @@ def compute_healthcare_kpis(gaap: dict, years: int = 5) -> dict:
         "SalesRevenueNet",
     ], years + 1)
 
-    # Product vs service revenue breakdown
-    product_revenue = extract_annual_values(gaap, [
-        "RevenueFromContractWithCustomerExcludingAssessedTaxProductAndService",
-        "SalesRevenueGoodsNet",
-    ], years)
-
-    service_revenue = extract_annual_values(gaap, [
-        "SalesRevenueServicesNet",
-        "HealthCareOrganizationRevenue",
-    ], years)
-
     # ── Costs ───────────────────────────────────────────────────────────
     cogs = extract_annual_values(gaap, [
         "CostOfGoodsAndServicesSold",
@@ -114,14 +103,6 @@ def compute_healthcare_kpis(gaap: dict, years: int = 5) -> dict:
         "CashCashEquivalentsAndShortTermInvestments",
     ], years)
 
-    inventory = extract_annual_values(gaap, [
-        "InventoryNet",
-    ], years)
-
-    shares = extract_annual_values(gaap, [
-        "WeightedAverageNumberOfDilutedSharesOutstanding",
-    ], years)
-
     # SBC
     sbc = extract_annual_values(gaap, [
         "ShareBasedCompensation",
@@ -163,7 +144,6 @@ def compute_healthcare_kpis(gaap: dict, years: int = 5) -> dict:
     debt_by_date = {e["date"]: e["val"] for e in total_debt}
     cash_by_date = {e["date"]: e["val"] for e in cash}
     sbc_by_date = {e["date"]: e["val"] for e in sbc}
-    inv_by_date = {e["date"]: e["val"] for e in inventory}
 
     rev_dates = sorted(rev_by_date.keys(), reverse=True)
     for i, date in enumerate(rev_dates[:years]):
@@ -183,7 +163,6 @@ def compute_healthcare_kpis(gaap: dict, years: int = 5) -> dict:
         debt = debt_by_date.get(date)
         cash_val = cash_by_date.get(date)
         sb = sbc_by_date.get(date)
-        inv = inv_by_date.get(date)
 
         prior_date = rev_dates[i + 1] if i + 1 < len(rev_dates) else None
         prior_rev = rev_by_date.get(prior_date) if prior_date else None
@@ -251,21 +230,21 @@ def compute_healthcare_kpis(gaap: dict, years: int = 5) -> dict:
             "netMargin": round(net_margin, 4) if net_margin is not None else None,
             "fcfMargin": round(fcf_margin, 4) if fcf_margin is not None else None,
             # R&D
-            "rdIntensity": round(rd_intensity, 4) if rd_intensity else None,
-            "rdToGrossProfit": round(rd_to_gross_profit, 4) if rd_to_gross_profit else None,
+            "rdIntensity": round(rd_intensity, 4) if rd_intensity is not None else None,
+            "rdToGrossProfit": round(rd_to_gross_profit, 4) if rd_to_gross_profit is not None else None,
             # Efficiency
-            "sgaAsPercentOfRevenue": round(sga_pct, 4) if sga_pct else None,
-            "sbcAsPercentOfRevenue": round(sbc_pct, 4) if sbc_pct else None,
+            "sgaAsPercentOfRevenue": round(sga_pct, 4) if sga_pct is not None else None,
+            "sbcAsPercentOfRevenue": round(sbc_pct, 4) if sbc_pct is not None else None,
             # Growth
             "revenueGrowth": round(rev_growth, 4) if rev_growth is not None else None,
             # Balance sheet
-            "intangibleAssetIntensity": round(intangible_pct, 4) if intangible_pct else None,
-            "netDebtToEbitda": round(net_debt_to_ebitda, 2) if net_debt_to_ebitda else None,
+            "intangibleAssetIntensity": round(intangible_pct, 4) if intangible_pct is not None else None,
+            "netDebtToEbitda": round(net_debt_to_ebitda, 2) if net_debt_to_ebitda is not None else None,
             "cashRunwayYears": cash_runway,
             # Returns
-            "roa": round(roa, 4) if roa else None,
-            "roe": round(roe, 4) if roe else None,
-            "roic": round(roic, 4) if roic else None,
+            "roa": round(roa, 4) if roa is not None else None,
+            "roe": round(roe, 4) if roe is not None else None,
+            "roic": round(roic, 4) if roic is not None else None,
         })
 
     kpis["computedMetrics"] = computed

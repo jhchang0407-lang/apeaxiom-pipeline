@@ -72,10 +72,6 @@ def compute_energy_kpis(gaap: dict, years: int = 5) -> dict:
         "NetIncomeLoss",
     ], years)
 
-    sga = extract_annual_values(gaap, [
-        "SellingGeneralAndAdministrativeExpense",
-    ], years)
-
     # ── Cash Flow ───────────────────────────────────────────────────────
     capex = extract_annual_values(gaap, [
         "PaymentsToAcquirePropertyPlantAndEquipment",
@@ -103,10 +99,6 @@ def compute_energy_kpis(gaap: dict, years: int = 5) -> dict:
     ], years)
 
     # ── Balance Sheet ───────────────────────────────────────────────────
-    total_assets = extract_annual_values(gaap, [
-        "Assets",
-    ], years)
-
     equity = extract_annual_values(gaap, [
         "StockholdersEquity",
         "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
@@ -147,10 +139,8 @@ def compute_energy_kpis(gaap: dict, years: int = 5) -> dict:
     buyback_by_date = {e["date"]: e["val"] for e in share_repurchases}
     explore_by_date = {e["date"]: e["val"] for e in exploration_expense}
     prod_cost_by_date = {e["date"]: e["val"] for e in production_costs}
-    assets_by_date = {e["date"]: e["val"] for e in total_assets}
     ppe_by_date = {e["date"]: e["val"] for e in pp_and_e}
     shares_by_date = {e["date"]: e["val"] for e in shares}
-    reserves_by_date = {e["date"]: e["val"] for e in proved_reserves}
 
     rev_dates = sorted(rev_by_date.keys(), reverse=True)
     for i, date in enumerate(rev_dates[:years]):
@@ -167,10 +157,8 @@ def compute_energy_kpis(gaap: dict, years: int = 5) -> dict:
         buyback = buyback_by_date.get(date)
         explore = explore_by_date.get(date)
         prod_cost = prod_cost_by_date.get(date)
-        assets = assets_by_date.get(date)
         ppe = ppe_by_date.get(date)
         shr = shares_by_date.get(date)
-        reserves = reserves_by_date.get(date)
 
         prior_date = rev_dates[i + 1] if i + 1 < len(rev_dates) else None
         prior_rev = rev_by_date.get(prior_date) if prior_date else None
@@ -217,10 +205,6 @@ def compute_energy_kpis(gaap: dict, years: int = 5) -> dict:
         # Production cost per revenue (lifting cost proxy)
         prod_cost_pct = safe_div(prod_cost, rev)
 
-        # Reserve life = proved reserves / production (if both available)
-        # Would need production volumes in same units — approximate
-        reserve_life = None  # Requires production volume data in matching units
-
         # Capital efficiency = revenue / PP&E
         capital_efficiency = safe_div(rev, ppe)
 
@@ -239,23 +223,23 @@ def compute_energy_kpis(gaap: dict, years: int = 5) -> dict:
             "netMargin": round(net_margin, 4) if net_margin is not None else None,
             "fcfMargin": round(fcf_margin, 4) if fcf_margin is not None else None,
             # Capital allocation
-            "capexToRevenue": round(capex_to_rev, 4) if capex_to_rev else None,
-            "reinvestmentRate": round(reinvestment_rate, 4) if reinvestment_rate else None,
-            "shareholderReturnRatio": round(shareholder_return_ratio, 4) if shareholder_return_ratio else None,
+            "capexToRevenue": round(capex_to_rev, 4) if capex_to_rev is not None else None,
+            "reinvestmentRate": round(reinvestment_rate, 4) if reinvestment_rate is not None else None,
+            "shareholderReturnRatio": round(shareholder_return_ratio, 4) if shareholder_return_ratio is not None else None,
             # Cost structure
-            "ddaToRevenue": round(dda_to_rev, 4) if dda_to_rev else None,
-            "explorationPctOfRevenue": round(explore_pct, 4) if explore_pct else None,
-            "productionCostPctOfRevenue": round(prod_cost_pct, 4) if prod_cost_pct else None,
+            "ddaToRevenue": round(dda_to_rev, 4) if dda_to_rev is not None else None,
+            "explorationPctOfRevenue": round(explore_pct, 4) if explore_pct is not None else None,
+            "productionCostPctOfRevenue": round(prod_cost_pct, 4) if prod_cost_pct is not None else None,
             # Leverage
-            "debtToEbitda": round(debt_to_ebitda, 2) if debt_to_ebitda else None,
-            "debtToEquity": round(debt_to_equity, 4) if debt_to_equity else None,
+            "debtToEbitda": round(debt_to_ebitda, 2) if debt_to_ebitda is not None else None,
+            "debtToEquity": round(debt_to_equity, 4) if debt_to_equity is not None else None,
             # Returns
-            "roce": round(roce, 4) if roce else None,
-            "capitalEfficiency": round(capital_efficiency, 4) if capital_efficiency else None,
+            "roce": round(roce, 4) if roce is not None else None,
+            "capitalEfficiency": round(capital_efficiency, 4) if capital_efficiency is not None else None,
             # Growth
             "revenueGrowth": round(rev_growth, 4) if rev_growth is not None else None,
             # Per share
-            "fcfPerShare": round(fcf_per_share, 2) if fcf_per_share else None,
+            "fcfPerShare": round(fcf_per_share, 2) if fcf_per_share is not None else None,
         })
 
     kpis["computedMetrics"] = computed

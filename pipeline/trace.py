@@ -1,8 +1,7 @@
 """Pipeline trace / checkpoint system.
 
 Dumps a JSON snapshot at each pipeline stage so you can inspect
-exactly what data is present, missing, or wrong — like clicking on
-an n8n node to see its input/output.
+exactly what data is present, missing, or wrong at every step.
 
 Usage in orchestrator.py:
     trace = PipelineTrace(ticker, output_dir)

@@ -15,12 +15,6 @@ def _safe_div(numerator: float | None, denominator: float | None) -> float | Non
     return numerator / denominator
 
 
-def _safe_pct(numerator: float | None, denominator: float | None) -> float | None:
-    """Safe percentage calculation."""
-    result = _safe_div(numerator, denominator)
-    return result if result is None else result
-
-
 def _avg(a: float | None, b: float | None) -> float | None:
     """Average of two values, handling None."""
     if a is None and b is None:
@@ -85,7 +79,6 @@ def calculate_ratios(
         inv = bs.get("inventory")
         total_assets = bs.get("totalAssets")
         total_equity = bs.get("totalStockholdersEquity")
-        total_liabilities = bs.get("totalLiabilities")
         total_debt_val = bs.get("totalDebt")
         current_assets = bs.get("totalCurrentAssets")
         current_liabilities = bs.get("totalCurrentLiabilities")
@@ -162,7 +155,7 @@ def calculate_ratios(
         fcf_margin = _safe_div(fcf, margin_rev)
         ocf_margin = _safe_div(ocf, margin_rev)
         capex_to_rev = _safe_div(abs(capex) if capex else None, margin_rev)
-        fcf_conversion = _safe_div(fcf, abs(net_inc) if net_inc else None)
+        fcf_conversion = _safe_div(fcf, net_inc if net_inc and net_inc > 0 else None)
         sbc_to_rev = _safe_div(is_row.get("stockBasedCompensation"), margin_rev)
 
         # ── Leverage ──────────────────────────────────────────────────────
@@ -185,7 +178,6 @@ def calculate_ratios(
         # ── Efficiency ratios (FMP-compatible) ───────────────────────────
         rd = is_row.get("researchAndDevelopmentExpenses")
         sga = is_row.get("sellingGeneralAndAdministrativeExpenses")
-        sbc = is_row.get("stockBasedCompensation")
         rd_to_rev = _safe_div(rd, margin_rev)
         sga_to_rev = _safe_div(sga, margin_rev)
 
@@ -195,7 +187,7 @@ def calculate_ratios(
         # Dividend metrics (from cash flow)
         div_paid = cf.get("dividendsPaid")
         dividend_payout = _safe_div(abs(div_paid) if div_paid else None,
-                                     abs(net_inc) if net_inc else None)
+                                     net_inc if net_inc and net_inc > 0 else None)
 
         # Receivables growth (YoY)
         prior_ar = prior_bs.get("accountsReceivables")
@@ -328,7 +320,6 @@ def calculate_key_metrics(
         bs = bs_by_date.get(date, {})
 
         rev = is_row.get("revenue")
-        net_inc = is_row.get("netIncome")
         ocf = cf.get("operatingCashFlow")
         fcf = cf.get("freeCashFlow")
         capex = cf.get("capitalExpenditure")
@@ -408,10 +399,6 @@ def calculate_owner_earnings(
         shares = is_row.get("weightedAverageSharesDiluted")
         oe_per_share = _safe_div(owner_earnings, shares)
 
-        # Average PP&E (current + prior / 2) for FMP compat
-        ppe = cf_by_date.get(date, {})  # not directly in CF, try BS lookup
-        avg_ppe = None
-
         cal_year = is_row.get("calendarYear", "")
         results.append({
             "date": date,
@@ -427,7 +414,7 @@ def calculate_owner_earnings(
             # FMP-compatible aliases
             "ownersEarnings": owner_earnings,
             "ownersEarningsPerShare": oe_per_share,
-            "averagePPE": avg_ppe,
+            "averagePPE": None,  # not computed from SEC data
         })
 
     return results

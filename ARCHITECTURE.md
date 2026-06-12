@@ -1,18 +1,17 @@
-# Ape Axiom — Website Pipeline Architecture
+# Ape Axiom — Pipeline Architecture
 
 ## Directory Overview
 
 ```
-website Memo/
-│
+.
 ├── run_master.py            ← CRON: Daily automation trigger
 │                              Checks FMP for new earnings (3d) & 10-K filings (10d),
-│                              matches against sp500_tickers.json, triggers quarterly
-│                              & memo pipelines in batches of 2
+│                              matches against sp500_tickers.json, runs quarterly
+│                              (batches of 5) & memo (batches of 2) pipelines
 │
-├── run_memo.py              ← ENTRY: Full memo pipeline (Modal cloud deployment)
+├── run_memo.py              ← ENTRY: Full memo pipeline
 │                              Runs full 10-K research memo → uploads JSON to R2
-│                              Called by run_master.py or via Modal webhook
+│                              Called by run_master.py or standalone
 │
 ├── run_quarterly.py         ← ENTRY: Quarterly earnings pipeline
 │                              Runs quarterly earnings report → uploads JSON to R2
@@ -22,13 +21,19 @@ website Memo/
 │                              Pulls prices & metrics from FMP, calculates in Python,
 │                              uploads Dashboard/ and Daily Price/ JSON to R2
 │
-├── run_batch_sp500.py       ← BATCH: One-time backfill for all S&P 500 tickers
-│                              Reads sp500_tickers.json, runs memo pipeline for each,
-│                              uploads each to R2 with resume support
+├── run_batch_sp500.py       ← BATCH: Backfill for all S&P 500 tickers
+│                              Runs memo and/or quarterly for every ticker,
+│                              with resume support (sp500_progress.json)
+│
+├── build_r2_index.py        ← UTILITY: Rebuild _index.json from a full R2
+│                              bucket listing (recovery / first-time setup)
 │
 ├── config/
-│   ├── settings.py          ← API keys, R2 credentials, model config
+│   ├── settings.py          ← All env-driven config (API keys, R2, models)
+│   ├── r2.py                ← Shared R2 client, upload, and index helpers
 │   └── fmp_client.py        ← FMP API HTTP client
+│
+├── prompts/                 ← Jinja2 templates for the three research agents
 │
 ├── pipeline/                ← FULL MEMO PIPELINE (10-K based)
 │   ├── orchestrator.py      ← Main pipeline controller — chains all stages
@@ -52,22 +57,22 @@ website Memo/
 │   ├── research.py          ← Stage 1: Sector-aware web search agent
 │   ├── fact_extract.py      ← Stage 2: Deterministic fact extraction from research
 │   ├── distributor.py       ← Stage 3: Pre-compute tables (financials, consensus, KPIs)
-│   ├── writer.py            ← Stage 4: AI prose generation (gpt-5-mini)
+│   ├── writer.py            ← Stage 4: AI prose generation
 │   ├── fact_check.py        ← Stage 5: Verify numbers in prose vs source data
 │   ├── formatter.py         ← Stage 6: Markdown output
 │   ├── html_formatter.py    ← Stage 6b: Dark-themed HTML dashboard
-│   └── sector_prompts.py    ← 12 sector families: research prompts, KPI schemas,
-│                              extraction rules, writer guidance
+│   └── sector_prompts.py    ← 13 sector families (+ generic fallback): research
+│                              prompts, KPI schemas, extraction rules, writer guidance
 │
 ├── sec/                     ← SEC EDGAR DATA LAYER
-│   ├── client.py            ← EDGAR HTTP client
+│   ├── client.py            ← EDGAR HTTP client (rate-limited, cached)
 │   ├── filings.py           ← 10-K/10-Q filing retrieval
 │   ├── statements.py        ← Income, balance sheet, cash flow parsing
 │   ├── segments.py          ← Revenue segment breakdown
 │   ├── profile.py           ← Company profile data
 │   ├── ratios.py            ← Financial ratio computations
 │   ├── mapper.py            ← XBRL tag mapping
-│   └── sectors/             ← Sector-specific EDGAR parsing
+│   └── sectors/             ← Sector-specific EDGAR parsing (11 modules)
 │       ├── banks.py         ← Banking (NII, provisions, CET1)
 │       ├── insurance.py     ← Insurance (premiums, combined ratio)
 │       ├── reits.py         ← REITs (FFO, NOI, occupancy)
@@ -84,29 +89,22 @@ website Memo/
 ├── valuation/               ← VALUATION MODELS
 │   ├── dcf.py               ← Discounted cash flow (FCFF)
 │   ├── ddm.py               ← Dividend discount model
-│   ├── bank_equity.py       ← Excess returns / equity model (banks)
+│   ├── bank_equity.py       ← Excess returns / justified P/B (banks)
 │   ├── nav.py               ← Net asset value (REITs)
 │   ├── peer_multiples.py    ← Relative valuation (EV/EBITDA, P/E, etc.)
-│   └── industry_config.py   ← Sector → valuation model routing
+│   └── industry_config.py   ← Industry → valuation model routing
 │
-├── tests/                   ← TEST FILES
-│   ├── test_full_pipeline.py
-│   ├── test_writer_validation.py
-│   ├── test_qualitative_sections.py
-│   ├── test_quant_all_sectors.py
-│   ├── test_sector_flow_probe.py
-│   └── test_single_section.py
-│
-├── output/                  ← LOCAL OUTPUT (not deployed)
-│   └── quarterly/
-│       ├── CRM .../          .json, .md
-│       ├── DDOG .../         .json, .md, .html
-│       ├── JPM .../          .json, .md, .html
-│       ├── PANW .../         .json, .md
-│       └── XOM .../          .json, .md, .html
-│
-└── website_backup_2026-03-11/  ← OLD BACKUP (can be deleted)
+└── tests/                   ← Standalone test scripts (hit live APIs)
+    ├── test_full_pipeline.py
+    ├── test_writer_validation.py
+    ├── test_qualitative_sections.py
+    ├── test_quant_all_sectors.py
+    ├── test_sector_flow_probe.py
+    └── test_single_section.py
 ```
+
+Local-only directories created at runtime (gitignored): `cache/` (SEC/FMP
+API response cache), `output/` (generated memos and reports).
 
 ---
 
@@ -129,7 +127,7 @@ website Memo/
   distributors (prepares section-specific data bundles + DCF inputs)
         │
         ▼
-  writers (13 AI-written sections, sector-aware prompts)
+  writers (14 AI-written sections: 11 body + 3 synthesis, sector-aware prompts)
         │
         ▼
   sanitize ──→ fact_check (verify numbers vs source data)
@@ -140,6 +138,8 @@ website Memo/
         ▼
   formatters (Markdown + HTML) ──→ R2 upload
 ```
+
+See [PIPELINE_MAP.md](PIPELINE_MAP.md) for a stage-by-stage deep dive.
 
 ### Quarterly Earnings Pipeline (`run_quarterly.py`)
 
@@ -156,7 +156,7 @@ website Memo/
   distributor (pre-compute tables: financials, consensus, sector KPIs)
         │
         ▼
-  writer (AI prose, gpt-5-mini, sector-specific guidance)
+  writer (AI prose, sector-specific guidance)
         │
         ▼
   fact_check (verify numbers in prose vs extracted facts)
@@ -175,7 +175,7 @@ website Memo/
         │    sp500_tickers.json (local S&P 500 list)
         │         │
         │         ▼
-        │    Matches ──→ run_quarterly.py {ticker} (batches of 2)
+        │    Matches ──→ run_quarterly.py {ticker} (batches of 5)
         │
         └──→ FMP 10-K Filings (last 10 days)
                   ∩
@@ -197,10 +197,12 @@ website Memo/
 
 ---
 
-## R2 Bucket Structure (`apeaxiom`)
+## R2 Bucket Structure
 
 ```
-apeaxiom/
+<bucket>/
+├── _index.json              ← type → ticker → latest key (maintained
+│                              incrementally; rebuild with build_r2_index.py)
 ├── Memo/{yyyy}/{MM}/{TICKER}/{TICKER} {MM}-{MMM} {dd}, {yyyy}-{yy}.json
 ├── Quarterly/{yyyy}/{MM}/{TICKER}/Quarterly {TICKER} {MM}-{MMM} {dd}, {yyyy}-{yy}.json
 ├── Daily Price/{yyyy}/{MM}/DailyPrices {MM-DD-yy}.json
@@ -209,11 +211,16 @@ apeaxiom/
 
 ---
 
-## Railway Cron Jobs (target deployment)
+## Deployment (Railway cron, or any scheduler)
 
-| Job | Script | Schedule | What it does |
-|-----|--------|----------|-------------|
-| Market Data | `python run_market_data.py` | Daily 2am | FMP → metrics + prices → R2 |
-| Master | `python run_master.py` | Daily 2am | Detect new earnings/10-Ks → trigger pipelines |
-| *(triggered)* | `python run_quarterly.py {ticker}` | On-demand | Quarterly earnings report → R2 |
-| *(triggered)* | `python run_memo.py {ticker}` | On-demand | Full 10-K research memo → R2 |
+Two services, both defined by Dockerfiles in this repo. Service-specific
+settings (Dockerfile path, start command, cron schedule, env vars) are
+configured in the Railway UI — `railway.toml` documents the mapping.
+
+| Job | Image | Script | Schedule | What it does |
+|-----|-------|--------|----------|-------------|
+| Market Data | `Dockerfile.market_data` | `python run_market_data.py` | Daily | FMP → metrics + prices → R2 |
+| Master | `Dockerfile` | `python run_master.py` | Daily | Detect new earnings/10-Ks → run pipelines |
+
+Both services need the environment variables listed in
+[.env.template](.env.template).

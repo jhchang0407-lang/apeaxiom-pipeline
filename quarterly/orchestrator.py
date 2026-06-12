@@ -14,10 +14,8 @@ Designed to run in 60-120 seconds.
 
 from __future__ import annotations
 
-import asyncio
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional
 
 import httpx
 

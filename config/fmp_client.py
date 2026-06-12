@@ -134,10 +134,7 @@ async def fetch_surprises(client: httpx.AsyncClient, ticker: str) -> list:
             *[_query_window(fd) for fd in filing_dates[:8]],
             return_exceptions=True,
         )
-        surprises = [
-            r for r in results
-            if isinstance(r, dict) and r is not None
-        ]
+        surprises = [r for r in results if isinstance(r, dict)]
         return sorted(surprises, key=lambda x: x.get("date", ""), reverse=True)
     except Exception:
         return []
@@ -167,12 +164,13 @@ async def fetch_peers(client: httpx.AsyncClient, ticker: str) -> list:
 
     Returns list of peer records with key metrics for benchmarking.
     """
-    # Get peer stock list
+    # Get peer stock list (FMP error responses are dicts, not lists)
     peer_list = await fetch_fmp(client, "/stock-peers", {"symbol": ticker})
-    if not peer_list:
+    if not isinstance(peer_list, list) or not peer_list:
         return []
 
-    peers = peer_list[0].get("peersList", []) if isinstance(peer_list, list) else []
+    first = peer_list[0]
+    peers = first.get("peersList", []) if isinstance(first, dict) else []
     if not peers:
         return []
 
@@ -232,7 +230,7 @@ async def fetch_peers(client: httpx.AsyncClient, ticker: str) -> list:
                 # Financials
                 "revenue": inc.get("revenue"),
                 "grossProfit": inc.get("grossProfit"),
-                "ebitda": inc.get("ebitda") or inc.get("ebitdaratio"),
+                "ebitda": inc.get("ebitda"),
                 "netIncome": inc.get("netIncome"),
                 "eps": inc.get("eps"),
             })

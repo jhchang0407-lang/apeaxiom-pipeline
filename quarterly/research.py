@@ -10,8 +10,6 @@ and KPI schema fields into the prompt.
 from __future__ import annotations
 
 import json
-import os
-from typing import Any
 
 from config.settings import OPENAI_API_KEY, RESEARCH_AGENT_MODEL
 from quarterly.sector_prompts import get_sector_config
@@ -304,7 +302,7 @@ async def run_quarterly_research(
     """
     import openai
 
-    client = openai.AsyncOpenAI(api_key=OPENAI_API_KEY)
+    client = openai.AsyncOpenAI(api_key=OPENAI_API_KEY, timeout=300)
 
     schema = _build_research_schema(sector_family)
     system_prompt = _build_system_prompt(sector_family)

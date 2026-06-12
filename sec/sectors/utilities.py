@@ -51,10 +51,6 @@ def compute_utility_kpis(gaap: dict, years: int = 5) -> dict:
         "DepreciationAndAmortization",
     ], years)
 
-    income_tax = extract_annual_values(gaap, [
-        "IncomeTaxExpenseBenefit",
-    ], years)
-
     # ── Cash Flow ───────────────────────────────────────────────────────
     ocf = extract_annual_values(gaap, [
         "NetCashProvidedByUsedInOperatingActivities",
@@ -67,10 +63,6 @@ def compute_utility_kpis(gaap: dict, years: int = 5) -> dict:
     dividends = extract_annual_values(gaap, [
         "PaymentsOfDividendsCommonStock",
         "PaymentsOfDividends",
-    ], years)
-
-    share_repurchases = extract_annual_values(gaap, [
-        "PaymentsForRepurchaseOfCommonStock",
     ], years)
 
     # ── Balance Sheet ───────────────────────────────────────────────────
@@ -113,10 +105,6 @@ def compute_utility_kpis(gaap: dict, years: int = 5) -> dict:
         "ConstructionInProgressGross",
     ], years)
 
-    shares = extract_annual_values(gaap, [
-        "WeightedAverageNumberOfDilutedSharesOutstanding",
-    ], years)
-
     eps = extract_annual_values(gaap, [
         "EarningsPerShareDiluted",
     ], years)
@@ -144,19 +132,15 @@ def compute_utility_kpis(gaap: dict, years: int = 5) -> dict:
     ni_by_date = {e["date"]: e["val"] for e in net_income}
     int_exp_by_date = {e["date"]: e["val"] for e in interest_expense}
     da_by_date = {e["date"]: e["val"] for e in depreciation}
-    tax_by_date = {e["date"]: e["val"] for e in income_tax}
     ocf_by_date = {e["date"]: e["val"] for e in ocf}
     capex_by_date = {e["date"]: e["val"] for e in capex}
     div_by_date = {e["date"]: e["val"] for e in dividends}
-    buyback_by_date = {e["date"]: e["val"] for e in share_repurchases}
     assets_by_date = {e["date"]: e["val"] for e in total_assets}
     ppe_by_date = {e["date"]: e["val"] for e in pp_and_e}
     eq_by_date = {e["date"]: e["val"] for e in equity}
     debt_by_date = {e["date"]: e["val"] for e in total_debt}
     st_debt_by_date = {e["date"]: e["val"] for e in short_term_debt}
     reg_assets_by_date = {e["date"]: e["val"] for e in regulatory_assets}
-    cwip_by_date = {e["date"]: e["val"] for e in construction_wip}
-    shares_by_date = {e["date"]: e["val"] for e in shares}
     eps_by_date = {e["date"]: e["val"] for e in eps}
     dps_by_date = {e["date"]: e["val"] for e in dividends_per_share}
 
@@ -169,19 +153,15 @@ def compute_utility_kpis(gaap: dict, years: int = 5) -> dict:
         ni = ni_by_date.get(date)
         int_exp = int_exp_by_date.get(date)
         da = da_by_date.get(date)
-        tax = tax_by_date.get(date)
         oc = ocf_by_date.get(date)
         cx = capex_by_date.get(date)
         div = div_by_date.get(date)
-        buyback = buyback_by_date.get(date)
         assets = assets_by_date.get(date)
         ppe = ppe_by_date.get(date)
         eq = eq_by_date.get(date)
         debt = debt_by_date.get(date)
         st_debt = st_debt_by_date.get(date)
         reg_a = reg_assets_by_date.get(date)
-        cwip = cwip_by_date.get(date)
-        shr = shares_by_date.get(date)
         ep = eps_by_date.get(date)
         dps = dps_by_date.get(date)
 
