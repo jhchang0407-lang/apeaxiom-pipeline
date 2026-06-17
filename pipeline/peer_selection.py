@@ -128,16 +128,15 @@ async def _fetch_fmp(
     path: str,
     params: dict | None = None,
 ) -> dict | list:
-    """FMP API helper."""
-    import httpx
+    """FMP API helper — delegates to the shared rate-limited, retrying client.
 
-    url = f"{FMP_BASE_URL}{path}"
-    all_params = {"apikey": FMP_API_KEY}
-    if params:
-        all_params.update(params)
-    resp = await client.get(url, params=all_params, timeout=30.0)
-    resp.raise_for_status()
-    return resp.json()
+    Peer financials are fetched in concurrent bursts (6 endpoints × N peers).
+    Routing through ``config.fmp_client.fetch_fmp`` means peer requests share
+    the pipeline-wide concurrency limiter and retry/backoff, so a transient FMP
+    failure no longer silently blanks peer-comp / valuation cells.
+    """
+    from config.fmp_client import fetch_fmp
+    return await fetch_fmp(client, path, params)
 
 
 async def _fetch_single_peer(
@@ -159,6 +158,17 @@ async def _fetch_single_peer(
             km_task, ratios_task, growth_task, income_task, cashflow_task,
             profile_task, return_exceptions=True,
         )
+
+        # Surface endpoint failures (after the shared client's retries) so a
+        # blank peer row in Section 11/12 is diagnosable, not silently missing.
+        _named = {
+            "key-metrics": km, "ratios": ratios, "financial-growth": growth,
+            "income-statement": income, "cash-flow": cashflow, "profile": profile,
+        }
+        _failed = [n for n, v in _named.items() if isinstance(v, BaseException)]
+        if _failed:
+            print(f"  ⚠ peer {symbol}: FMP fetch failed after retries for "
+                  f"{', '.join(_failed)} — those columns will be blank")
 
         # Normalize results
         km = km if isinstance(km, list) else []

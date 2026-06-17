@@ -49,12 +49,10 @@ class QuarterlyResult:
 
 
 async def _fetch_fmp_profile(ticker: str) -> dict:
-    """Fetch FMP company profile."""
-    url = f"{FMP_BASE_URL}/profile"
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.get(url, params={"symbol": ticker, "apikey": FMP_API_KEY})
-        resp.raise_for_status()
-        data = resp.json()
+    """Fetch FMP company profile via the shared rate-limited, retrying client."""
+    from config.fmp_client import fetch_fmp
+    async with httpx.AsyncClient() as client:
+        data = await fetch_fmp(client, "/profile", {"symbol": ticker})
     # FMP returns a list with one item
     if isinstance(data, list) and data:
         return data[0]

@@ -5,35 +5,97 @@ Kept for endpoints not available from SEC EDGAR:
 - Earnings surprises (estimates vs actual)
 - Company profile (market data: price, market cap, beta)
 - Peer financial data
+
+Every FMP request in the memo pipeline (subject data, peer comps, quarterly)
+funnels through ``fetch_fmp``, which applies a shared concurrency cap (rate
+limiting) plus retry/backoff on transient failures.  This keeps peer-comp and
+valuation tables fully populated instead of silently dropping cells when FMP
+momentarily rate-limits or times out under the pipeline's concurrent load.
 """
 
+import asyncio
+import os
+import random
+
 import httpx
+
 from config.settings import FMP_API_KEY, FMP_BASE_URL
+
+# ── Rate limiting + retry ────────────────────────────────────────────
+# FMP plans rate-limit on requests/sec.  A full run bursts the subject's ~15
+# endpoints, each peer's 6 endpoints (× up to 12 peers), and the quarterly
+# profile.  A shared semaphore bounds in-flight requests so we stop tripping the
+# limit; transient failures that still slip through (429/5xx, timeouts,
+# connection resets) are retried with exponential backoff + jitter.  Hard errors
+# (401/403/404) raise immediately — retrying won't help.  Tunable via env.
+FMP_MAX_CONCURRENCY = int(os.getenv("FMP_MAX_CONCURRENCY", "8"))
+FMP_MAX_RETRIES = int(os.getenv("FMP_MAX_RETRIES", "4"))
+FMP_TIMEOUT_S = float(os.getenv("FMP_TIMEOUT_S", "30"))
+_TRANSIENT_STATUS = frozenset({429, 500, 502, 503, 504})
+
+_semaphore: asyncio.Semaphore | None = None
+
+
+def _get_semaphore() -> asyncio.Semaphore:
+    """Lazily create the shared concurrency limiter (binds to the running loop)."""
+    global _semaphore
+    if _semaphore is None:
+        _semaphore = asyncio.Semaphore(FMP_MAX_CONCURRENCY)
+    return _semaphore
 
 
 async def fetch_fmp(
     client: httpx.AsyncClient,
     path: str,
     params: dict | None = None,
+    *,
+    retries: int = FMP_MAX_RETRIES,
 ) -> dict | list:
-    """Make an async FMP API request.
+    """Make a rate-limited, retrying async FMP API request.
+
+    A shared module-level semaphore caps concurrent FMP requests across the
+    whole pipeline; transient failures (429/5xx, timeouts, connection resets)
+    are retried with exponential backoff + jitter.  Hard errors (401/403/404)
+    raise immediately.
 
     Args:
         client: httpx.AsyncClient instance
         path: API path (e.g., "/income-statement")
         params: Additional query parameters
+        retries: Max retry attempts for transient failures
 
     Returns:
         Parsed JSON response
+
+    Raises:
+        httpx.HTTPError: on a hard error, or if all retries are exhausted (so
+        callers can record/handle the failure rather than get a silent blank).
     """
     url = f"{FMP_BASE_URL}{path}"
     all_params = {"apikey": FMP_API_KEY}
     if params:
         all_params.update(params)
 
-    resp = await client.get(url, params=all_params, timeout=30.0)
-    resp.raise_for_status()
-    return resp.json()
+    sem = _get_semaphore()
+    last_exc: Exception | None = None
+    for attempt in range(retries + 1):
+        try:
+            async with sem:
+                resp = await client.get(url, params=all_params, timeout=FMP_TIMEOUT_S)
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code not in _TRANSIENT_STATUS:
+                raise  # hard error (401/403/404/…) — don't waste retries
+            last_exc = e
+        except (httpx.TimeoutException, httpx.TransportError) as e:
+            last_exc = e
+        if attempt < retries:
+            backoff = min(8.0, 0.5 * (2 ** attempt))  # 0.5, 1, 2, 4, 8 (capped)
+            await asyncio.sleep(backoff + random.uniform(0.0, 0.25))
+    # Exhausted retries — re-raise the last transient error.
+    assert last_exc is not None
+    raise last_exc
 
 
 async def fetch_income_statement(
