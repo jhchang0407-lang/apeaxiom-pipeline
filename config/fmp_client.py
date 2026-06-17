@@ -22,13 +22,17 @@ import httpx
 from config.settings import FMP_API_KEY, FMP_BASE_URL
 
 # ── Rate limiting + retry ────────────────────────────────────────────
-# FMP plans rate-limit on requests/sec.  A full run bursts the subject's ~15
-# endpoints, each peer's 6 endpoints (× up to 12 peers), and the quarterly
-# profile.  A shared semaphore bounds in-flight requests so we stop tripping the
-# limit; transient failures that still slip through (429/5xx, timeouts,
-# connection resets) are retried with exponential backoff + jitter.  Hard errors
-# (401/403/404) raise immediately — retrying won't help.  Tunable via env.
-FMP_MAX_CONCURRENCY = int(os.getenv("FMP_MAX_CONCURRENCY", "8"))
+# FMP rate-limits on requests/sec and does NOT expose the ceiling in response
+# headers (verified — no X-RateLimit/Retry-After), and some endpoints are
+# stricter than others.  Rather than guess a concurrency that could trip those
+# limits, we default to SEQUENTIAL — one request at a time (semaphore = 1).
+# The cost is negligible: a run is LLM-bound and FMP is only ~90 short requests
+# (~20s serialized), and it keeps peer-comp / valuation tables fully populated.
+# Transient failures that still occur (429/5xx, timeouts, connection resets) are
+# retried with exponential backoff + jitter; hard errors (401/403/404) raise
+# immediately.  Raise FMP_MAX_CONCURRENCY only on a plan you've confirmed allows
+# more parallelism.
+FMP_MAX_CONCURRENCY = int(os.getenv("FMP_MAX_CONCURRENCY", "1"))
 FMP_MAX_RETRIES = int(os.getenv("FMP_MAX_RETRIES", "4"))
 FMP_TIMEOUT_S = float(os.getenv("FMP_TIMEOUT_S", "30"))
 _TRANSIENT_STATUS = frozenset({429, 500, 502, 503, 504})
